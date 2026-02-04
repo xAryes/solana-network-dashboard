@@ -163,56 +163,6 @@ npm run dev
 npm run build
 ```
 
-## 🚀 Deployment
-
-### Option 1: Vercel (Recommended - Easiest)
-
-1. Push your code to GitHub
-2. Go to [vercel.com](https://vercel.com) and sign in with GitHub
-3. Click "New Project" → Import your repository
-4. Vercel auto-detects Vite - just click "Deploy"
-5. Your site will be live at `https://your-project.vercel.app`
-
-### Option 2: Netlify
-
-1. Push your code to GitHub
-2. Go to [netlify.com](https://netlify.com) and sign in with GitHub
-3. Click "Add new site" → "Import an existing project"
-4. Select your repository
-5. Build settings: Build command `npm run build`, Publish directory `dist`
-6. Click "Deploy"
-
-### Option 3: GitHub Pages
-
-1. Edit `vite.config.ts` and uncomment the `base` line:
-   ```typescript
-   base: '/your-repo-name/',
-   ```
-2. Push to GitHub
-3. Enable GitHub Pages in repository Settings → Pages
-4. Set source to "GitHub Actions"
-5. Create `.github/workflows/deploy.yml`:
-   ```yaml
-   name: Deploy to GitHub Pages
-   on:
-     push:
-       branches: [main]
-   jobs:
-     deploy:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v4
-         - uses: actions/setup-node@v4
-           with:
-             node-version: 20
-         - run: npm ci
-         - run: npm run build
-         - uses: peaceiris/actions-gh-pages@v3
-           with:
-             github_token: ${{ secrets.GITHUB_TOKEN }}
-             publish_dir: ./dist
-   ```
-
 ## Detected Programs
 
 The dashboard recognizes 40+ Solana programs:
