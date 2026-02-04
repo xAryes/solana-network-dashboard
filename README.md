@@ -1,6 +1,6 @@
 # Solana Network Dashboard
 
-A real-time Solana mainnet dashboard displaying network statistics, block data, validators, and supply information.
+A real-time Solana mainnet dashboard displaying network statistics, block composition, program analytics, and transaction flow visualization.
 
 ## Features
 
@@ -11,6 +11,10 @@ A real-time Solana mainnet dashboard displaying network statistics, block data, 
 - **Validators & Stake**: Active/delinquent validator counts, total stake
 - **Supply Info**: Total, circulating, and non-circulating supply
 - **Block Performance**: Average TX/block, CU usage, success rates from recent blocks
+- **CU Distribution Analysis**: Transaction categorization by compute unit usage (Micro, Light, Medium, Heavy, Compute)
+- **Block Visualizer**: Visual composition of blocks showing transaction types
+- **Program Detection**: Identifies 40+ known Solana programs (Jupiter, Raydium, Orca, Pyth, etc.)
+- **Transaction Stream**: Clickable transaction grid with color-coded categories
 - **Recent Blocks Table**: Clickable slots with TX count, CU %, success rate
 - **Recent Transactions**: Transaction signatures with CU, fees, status
 - **Network Limits Reference**: Block CU limit (60M), TX limits, slot time targets
@@ -21,94 +25,130 @@ All data is fetched from **Solana mainnet** via [Helius RPC](https://helius.dev/
 - `getSlot()` - Current slot
 - `getEpochInfo()` - Epoch progress
 - `getRecentPerformanceSamples()` - TPS calculation
-- `getBlock()` - Block details with transactions
+- `getBlock()` - Block details with transactions and program IDs
 - `getSupply()` - SOL supply info
 - `getVoteAccounts()` - Validator data
 
+---
+
+## 🔑 Configuration - Use Your Own Helius API Key
+
+This dashboard is designed to work with any Helius plan. With higher-tier plans, you unlock additional features!
+
+### Quick Setup
+
+1. Get your API key at [helius.dev](https://helius.dev)
+2. Edit `src/hooks/useSolanaData.ts`:
+
+```typescript
+// Replace with your Helius API key
+const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY';
+```
+
+3. Run the dashboard:
+```bash
+npm install
+npm run dev
+```
+
+### Helius Plan Features
+
+| Feature | Free | Developer | Business | Professional |
+|---------|------|-----------|----------|--------------|
+| Basic RPC (blocks, slots, supply) | ✅ | ✅ | ✅ | ✅ |
+| Transaction parsing | ✅ | ✅ | ✅ | ✅ |
+| Rate limits | 10 RPS | 50 RPS | 200 RPS | 500+ RPS |
+| `getRecentPrioritizationFees` | ❌ | ✅ | ✅ | ✅ |
+| Priority Fee API | ❌ | ✅ | ✅ | ✅ |
+| Enhanced Transaction API | ❌ | ❌ | ✅ | ✅ |
+| DAS (Digital Asset Standard) | ❌ | ✅ | ✅ | ✅ |
+| Webhooks | ❌ | ✅ | ✅ | ✅ |
+| WebSocket subscriptions | ❌ | ❌ | ✅ | ✅ |
+
+### Unlockable Features (with Higher Plans)
+
+The dashboard has placeholder sections ready to display data when you have access:
+
+#### With Developer+ Plan:
+- **Priority Fees**: Real-time fee percentiles (min, median, p75, p90, max)
+- **Recommended Fee**: Suggested priority fee for fast inclusion
+
+#### With Business+ Plan:
+- **WebSocket Updates**: Real-time streaming instead of polling
+- **Enhanced Parsing**: Richer transaction metadata
+
+#### Future Integrations (PRs Welcome!):
+- **Jito Bundle Data**: MEV tips, bundle success rates
+- **Historical Charts**: TPS, fees, success rates over time
+- **Account Explorer**: View account history, token balances
+
+---
+
+## 🎨 Color Legend
+
+### Dashboard Theme Colors
+
+| Color | Hex | Usage |
+|-------|-----|-------|
+| 🟣 Purple | `#a78bfa` | Key metrics (slot, supply, epoch) |
+| 🟢 Green | `#34d399` | Health indicators (TPS, success rate) |
+| 🔵 Blue | `#38bdf8` | Interactive links (Solscan) |
+| 🟡 Yellow | `#fbbf24` | Warnings (high CU, low success) |
+| 🔴 Red | `#f87171` | Errors (failed transactions) |
+
+### Block Visualizer - Transaction Categories
+
+| Color | Category | Description | Example Programs |
+|-------|----------|-------------|------------------|
+| 🟢 Green | DEX | Swaps & AMM | Jupiter, Raydium, Orca, Meteora |
+| 🟠 Orange | Perps | Derivatives | Drift, Zeta |
+| 🩵 Teal | Lending | Borrow/Lend | Solend, Marginfi, Kamino |
+| 🔵 Blue | Staking | Liquid Staking | Marinade, Jito, Stake Pool |
+| 💜 Purple | Oracle | Price Feeds | Pyth, Switchboard |
+| 🩷 Pink | NFT | NFT Markets | Metaplex, Tensor, Magic Eden |
+| ⬜ Gray | Core | System ops | System, Token, ATA |
+| ⬛ Dark Gray | Vote | Consensus | Vote Program |
+| 🔘 Slate | Unknown | Unidentified | Other programs |
+
+### CU Distribution Categories
+
+| Category | CU Range | Typical Operations |
+|----------|----------|-------------------|
+| Micro | < 5k | SOL transfers, memos |
+| Light | 5k - 50k | Token transfers, basic ops |
+| Medium | 50k - 200k | Simple swaps, staking |
+| Heavy | 200k - 500k | Complex DeFi, multi-hop |
+| Compute | > 500k | Liquidations, heavy compute |
+
+---
+
 ## Current Limitations ⚠️
 
-### RPC Limitations (Basic Helius Plan)
+### With Basic/Free Helius Plan
 
-1. **No Priority Fee Data**: Cannot access `getRecentPrioritizationFees()` - would need enhanced RPC or DAS API
-2. **No Program-Level Analytics**: Can't efficiently aggregate transactions by program without indexing
-3. **No Account Contention Data**: Write lock contention requires validator-level access or specialized APIs
-4. **Limited Historical Data**: Only recent blocks available, no historical trends without archival node
-5. **Rate Limits**: Basic RPC has request limits, data refreshes every 2-5 seconds
-6. **No WebSocket**: Using polling instead of subscriptions for real-time updates
+1. **No Priority Fee Data**: `getRecentPrioritizationFees()` requires Developer+ plan
+2. **Polling Only**: No WebSocket subscriptions (requires Business+ plan)
+3. **Rate Limits**: 10 RPS limits refresh frequency to ~2-5 seconds
+4. **No Historical Data**: Only recent blocks, no archival access
 
-### Missing Features (Need Better Data Access)
+### Requires Custom Infrastructure
 
-| Feature | Required Data | Current Status |
-|---------|---------------|----------------|
-| Priority Fee Percentiles | `getRecentPrioritizationFees` or Helius Priority Fee API | Placeholder |
-| Top Programs by TX | Transaction indexing / Helius DAS | Placeholder |
-| Hot Accounts (Contention) | Validator scheduler data / Jito bundles API | Placeholder |
-| Skip Rate | Leader schedule + block production logs | Placeholder |
-| Vote Latency | Vote transaction analysis | Placeholder |
-| Stake Participation | Detailed epoch stake snapshots | Placeholder |
+| Feature | What's Needed |
+|---------|---------------|
+| Hot Accounts (Contention) | Validator scheduler access or Jito API |
+| Skip Rate by Validator | Leader schedule + production logs |
+| Vote Latency | Vote transaction analysis pipeline |
+| Historical Charts | Time-series database + indexer |
 
-## What Would Make It Better 🚀
-
-### 1. Enhanced RPC Access (Helius Pro/Business)
-- Priority fee market analysis (min, median, p75, p90, max)
-- Recommended fee for fast inclusion
-- Enhanced transaction parsing with Helius DAS API
-- Higher rate limits for more frequent updates
-
-### 2. Jito Integration
-- Bundle success rates
-- MEV reward data
-- Tip distribution analytics
-- Searcher activity metrics
-
-### 3. Custom Indexer (like Harmonic has)
-- Program-level transaction analytics
-- Top programs by TX count, CU usage, success rate
-- Account contention heatmap
-- Transaction type breakdown (swaps, transfers, NFT mints, etc.)
-- Historical trends and charts
-
-### 4. Validator-Level Access
-- Real-time scheduler queue depth
-- Write lock contention per account
-- Leader schedule visualization with your validator's slots
-- Skip rate tracking by validator
-
-### 5. UI Enhancements to Match Harmonic
-- [ ] **Block Visualization**: 3D/animated block explorer showing transaction flow
-- [ ] **Real-time Streaming**: WebSocket-based live transaction feed
-- [ ] **Search**: Transaction/account/block search functionality
-- [ ] **Historical Charts**: TPS, fees, success rates over time
-- [ ] **Detailed Block View**: Expandable block details with all transactions
-- [ ] **Account Explorer**: View account history, token balances
-- [ ] **Program Analytics**: Deep dive into specific programs
-
-## Comparison with Harmonic
-
-| Feature | This Dashboard | Harmonic |
-|---------|---------------|----------|
-| Real-time blocks | ✅ Basic table | ✅ Visual block explorer |
-| Transaction stream | ✅ Recent TXs | ✅ Live animated stream |
-| Network stats | ✅ Basic stats | ✅ Comprehensive |
-| Block visualization | ❌ | ✅ 3D block view |
-| Search | ❌ | ✅ Full search |
-| Historical data | ❌ | ✅ Charts & trends |
-| Priority fees | ❌ | ✅ Fee analytics |
-| Program breakdown | ❌ | ✅ Per-program stats |
-
-**Why the gap?** Harmonic likely has:
-- Custom indexing infrastructure
-- Direct validator node access
-- Specialized APIs for scheduler/contention data
-- Significant backend infrastructure
+---
 
 ## Tech Stack
 
 - **Frontend**: React 18 + TypeScript
-- **Styling**: Tailwind CSS
+- **Styling**: Tailwind CSS + CSS Variables
 - **Build**: Vite
 - **Solana**: @solana/web3.js
-- **RPC**: Helius (mainnet - basic plan)
+- **RPC**: Helius (configurable)
 
 ## Getting Started
 
@@ -123,24 +163,25 @@ npm run dev
 npm run build
 ```
 
-## Configuration
+## Detected Programs
 
-The Helius RPC endpoint is configured in `src/hooks/useSolanaData.ts`:
+The dashboard recognizes 40+ Solana programs:
 
-```typescript
-const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY';
-```
+**DEX/AMM**: Jupiter v4/v6, Raydium AMM/CLMM, Orca Whirlpool, Meteora DLMM, Openbook, Phoenix
 
-Get your API key at [helius.dev](https://helius.dev).
+**Oracles**: Pyth, Pyth v2, Switchboard
 
-## Color Legend
+**Lending**: Solend, Marginfi, Kamino Lend
 
-| Color | Meaning | Example |
-|-------|---------|---------|
-| 🟣 Purple (`#a78bfa`) | Key metrics | Current slot, Total supply |
-| 🟢 Green (`#34d399`) | Health indicators | TPS, Success rate, Circulating % |
-| 🔵 Blue (`#38bdf8`) | Interactive links | Block/TX links to Solscan |
-| 🟡 Yellow (`#fbbf24`) | Warnings | High CU usage, Low success rate |
+**Staking**: Marinade, Jito Staking, Stake Pool
+
+**NFT**: Metaplex, Tensor Swap, Tensor cNFT, Magic Eden v2
+
+**Perps**: Drift, Zeta
+
+**Core**: System, Token, Token-2022, ATA, Compute Budget, Vote, Memo
+
+To add more programs, edit `KNOWN_PROGRAMS` in `src/hooks/useSolanaData.ts`.
 
 ## Network Constants
 
@@ -154,10 +195,19 @@ Get your API key at [helius.dev](https://helius.dev).
 
 ## Resources
 
-- [Harmonic Explorer](https://explorer.harmonic.gg) - Inspiration for block visualization
+- [Helius Docs](https://docs.helius.dev/) - RPC & API documentation
+- [Helius Priority Fee API](https://docs.helius.dev/solana-rpc-nodes/alpha-priority-fee-api) - Fee recommendations
 - [Solscan](https://solscan.io) - Transaction explorer
-- [Helius Docs](https://docs.helius.dev/) - RPC documentation
 - [Solana Docs](https://solana.com/docs) - Network documentation
+
+## Contributing
+
+PRs welcome! Some ideas:
+- Add more program detections
+- Implement priority fee display (requires API key with access)
+- Add WebSocket support for real-time updates
+- Historical data charts
+- Account/transaction search
 
 ## License
 

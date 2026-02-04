@@ -349,10 +349,54 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--border-primary)] px-6 py-4 mt-8">
-        <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--text-muted)]">
-          <span>Real-time Solana mainnet data via Helius RPC</span>
-          <div className="flex items-center gap-6">
+      <footer className="border-t border-[var(--border-primary)] px-6 py-6 mt-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Category Legend */}
+          <div className="mb-4 pb-4 border-b border-[var(--border-primary)]">
+            <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2">Transaction Categories</div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.dex }} />
+                <span className="text-[var(--text-tertiary)]">DEX</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.perps }} />
+                <span className="text-[var(--text-tertiary)]">Perps</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.lending }} />
+                <span className="text-[var(--text-tertiary)]">Lending</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.staking }} />
+                <span className="text-[var(--text-tertiary)]">Staking</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.oracle }} />
+                <span className="text-[var(--text-tertiary)]">Oracle</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.nft }} />
+                <span className="text-[var(--text-tertiary)]">NFT</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.core }} />
+                <span className="text-[var(--text-tertiary)]">Core</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS.vote }} />
+                <span className="text-[var(--text-tertiary)]">Vote</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[var(--error)]" />
+                <span className="text-[var(--text-tertiary)]">Failed</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Dashboard Legend + Credits */}
+          <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
+            <span>Real-time Solana mainnet data via Helius RPC</span>
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
