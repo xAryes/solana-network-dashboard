@@ -112,6 +112,26 @@ export interface ValidatorInfo {
   totalStake: number;
 }
 
+export interface InflationInfo {
+  total: number;
+  validator: number;
+  foundation: number;
+  epoch: number;
+}
+
+export interface ClusterInfo {
+  totalNodes: number;
+  rpcNodes: number;
+  currentLeader: string | null;
+}
+
+export interface BlockProductionInfo {
+  totalSlots: number;
+  totalBlocksProduced: number;
+  totalSlotsSkipped: number;
+  skipRate: number;
+}
+
 // Singleton connection
 let connectionInstance: Connection | null = null;
 
@@ -397,6 +417,118 @@ export function useRecentTransactions(blocks: SlotData[]) {
     .slice(0, 20);
 
   return { transactions };
+}
+
+// Get inflation info
+export function useInflationInfo() {
+  const [inflation, setInflation] = useState<InflationInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchInflation = async () => {
+      try {
+        const connection = getConnection();
+        const inflationRate = await connection.getInflationRate();
+
+        setInflation({
+          total: inflationRate.total * 100,
+          validator: inflationRate.validator * 100,
+          foundation: inflationRate.foundation * 100,
+          epoch: inflationRate.epoch,
+        });
+        setIsLoading(false);
+      } catch (err) {
+        console.warn('Failed to fetch inflation:', err);
+        setIsLoading(false);
+      }
+    };
+
+    fetchInflation();
+    const interval = setInterval(fetchInflation, 60000); // Every 60s
+    return () => clearInterval(interval);
+  }, []);
+
+  return { inflation, isLoading };
+}
+
+// Get cluster info
+export function useClusterInfo() {
+  const [cluster, setCluster] = useState<ClusterInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCluster = async () => {
+      try {
+        const connection = getConnection();
+        const [nodes, leader] = await Promise.all([
+          connection.getClusterNodes(),
+          connection.getSlotLeader().catch(() => null),
+        ]);
+
+        const rpcNodes = nodes.filter(n => n.rpc !== null).length;
+
+        setCluster({
+          totalNodes: nodes.length,
+          rpcNodes,
+          currentLeader: leader,
+        });
+        setIsLoading(false);
+      } catch (err) {
+        console.warn('Failed to fetch cluster info:', err);
+        setIsLoading(false);
+      }
+    };
+
+    fetchCluster();
+    const interval = setInterval(fetchCluster, 30000); // Every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  return { cluster, isLoading };
+}
+
+// Get block production stats
+export function useBlockProduction() {
+  const [production, setProduction] = useState<BlockProductionInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchProduction = async () => {
+      try {
+        const connection = getConnection();
+        const prodInfo = await connection.getBlockProduction();
+
+        let totalSlots = 0;
+        let totalProduced = 0;
+
+        // Aggregate from all validators
+        for (const [, [slots, produced]] of Object.entries(prodInfo.value.byIdentity)) {
+          totalSlots += slots;
+          totalProduced += produced;
+        }
+
+        const skipped = totalSlots - totalProduced;
+        const skipRate = totalSlots > 0 ? (skipped / totalSlots) * 100 : 0;
+
+        setProduction({
+          totalSlots,
+          totalBlocksProduced: totalProduced,
+          totalSlotsSkipped: skipped,
+          skipRate,
+        });
+        setIsLoading(false);
+      } catch (err) {
+        console.warn('Failed to fetch block production:', err);
+        setIsLoading(false);
+      }
+    };
+
+    fetchProduction();
+    const interval = setInterval(fetchProduction, 30000); // Every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  return { production, isLoading };
 }
 
 // Helper to format SOL

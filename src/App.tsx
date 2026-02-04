@@ -5,6 +5,9 @@ import {
   useSupplyInfo,
   useValidatorInfo,
   useRecentTransactions,
+  useInflationInfo,
+  useClusterInfo,
+  useBlockProduction,
   formatCU,
   formatNumber,
   getSolscanUrl,
@@ -22,6 +25,9 @@ function App() {
   const { supply } = useSupplyInfo();
   const { validators } = useValidatorInfo();
   const { transactions } = useRecentTransactions(blocks);
+  const { inflation } = useInflationInfo();
+  const { cluster } = useClusterInfo();
+  const { production } = useBlockProduction();
 
   // Calculate block averages
   const avgTxPerBlock = blocks.length > 0
@@ -107,9 +113,9 @@ function App() {
           </div>
         </section>
 
-        {/* Validators & Stake */}
+        {/* Validators & Network */}
         <section className="mb-10">
-          <SectionHeader title="Validators & Stake" />
+          <SectionHeader title="Validators & Network" />
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             <StatCard
               label="Active Validators"
@@ -126,16 +132,29 @@ function App() {
               value={validators ? formatNumber(validators.totalStake) : '—'}
               subtext="SOL"
             />
-            <StatCard label="Stake Participation" value="—" subtext="Coming soon" />
-            <StatCard label="Skip Rate" value="—" subtext="Coming soon" />
-            <StatCard label="Vote Latency" value="—" subtext="Coming soon" />
+            <StatCard
+              label="Cluster Nodes"
+              value={cluster ? cluster.totalNodes.toLocaleString() : '—'}
+              subtext={cluster ? `${cluster.rpcNodes} RPC` : undefined}
+            />
+            <StatCard
+              label="Skip Rate"
+              value={production ? `${production.skipRate.toFixed(2)}%` : '—'}
+              subtext={production ? `${formatNumber(production.totalSlotsSkipped)} skipped` : undefined}
+              color={production && production.skipRate > 5 ? undefined : 'green'}
+            />
+            <StatCard
+              label="Blocks Produced"
+              value={production ? formatNumber(production.totalBlocksProduced) : '—'}
+              subtext="this epoch"
+            />
           </div>
         </section>
 
-        {/* Supply */}
+        {/* Supply & Economics */}
         <section className="mb-10">
-          <SectionHeader title="Supply" />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SectionHeader title="Supply & Economics" />
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
             <StatCard label="Total Supply" value={supply ? formatNumber(supply.total) : '—'} subtext="SOL" accent />
             <StatCard label="Circulating" value={supply ? formatNumber(supply.circulating) : '—'} subtext="SOL" />
             <StatCard label="Non-Circulating" value={supply ? formatNumber(supply.nonCirculating) : '—'} subtext="SOL" />
@@ -143,6 +162,28 @@ function App() {
               label="Circulating %"
               value={supply ? `${((supply.circulating / supply.total) * 100).toFixed(1)}%` : '—'}
               color="green"
+            />
+            <StatCard
+              label="Inflation Rate"
+              value={inflation ? `${inflation.total.toFixed(2)}%` : '—'}
+              subtext="annual"
+              color="blue"
+            />
+            <StatCard
+              label="Validator APY"
+              value={inflation ? `${inflation.validator.toFixed(2)}%` : '—'}
+              subtext="staking yield"
+              color="green"
+            />
+            <StatCard
+              label="Foundation"
+              value={inflation ? `${inflation.foundation.toFixed(2)}%` : '—'}
+              subtext="allocation"
+            />
+            <StatCard
+              label="Inflation Epoch"
+              value={inflation ? inflation.epoch.toLocaleString() : '—'}
+              subtext="current"
             />
           </div>
         </section>
@@ -396,7 +437,21 @@ function App() {
 
           {/* Dashboard Legend + Credits */}
           <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
-            <span>Real-time Solana mainnet data via Helius RPC</span>
+            <div className="flex items-center gap-2">
+              <span>Real-time Solana mainnet data via Helius RPC</span>
+              <span className="text-[var(--text-tertiary)]">•</span>
+              <span className="flex items-center gap-1">
+                Made with <span className="text-[var(--error)]">♥</span> by
+                <a
+                  href="https://github.com/xAryes"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--accent-secondary)] hover:underline"
+                >
+                  xAryes
+                </a>
+              </span>
+            </div>
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
