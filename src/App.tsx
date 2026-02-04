@@ -22,7 +22,7 @@ import type { SlotData } from './hooks/useSolanaData';
 
 function App() {
   const { stats, isLoading } = useNetworkStats();
-  const { blocks } = useRecentBlocks(8);
+  const { blocks } = useRecentBlocks(4);
   const { supply } = useSupplyInfo();
   const { validators } = useValidatorInfo();
   const { transactions } = useRecentTransactions(blocks);
