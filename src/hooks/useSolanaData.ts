@@ -30,7 +30,60 @@ export interface TransactionInfo {
   fee: number;
   computeUnits: number;
   slot: number;
+  programs: string[]; // Program IDs called in this transaction
 }
+
+// Known Solana program IDs for detection
+export const KNOWN_PROGRAMS: Record<string, { name: string; category: string; color: string }> = {
+  // System & Core
+  '11111111111111111111111111111111': { name: 'System', category: 'core', color: '#71717a' },
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': { name: 'Token', category: 'core', color: '#71717a' },
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb': { name: 'Token-2022', category: 'core', color: '#71717a' },
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': { name: 'ATA', category: 'core', color: '#71717a' },
+  'ComputeBudget111111111111111111111111111111': { name: 'Compute Budget', category: 'core', color: '#52525b' },
+  'Vote111111111111111111111111111111111111111': { name: 'Vote', category: 'vote', color: '#52525b' },
+
+  // DEX / AMM
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': { name: 'Jupiter v6', category: 'dex', color: '#22c55e' },
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB': { name: 'Jupiter v4', category: 'dex', color: '#22c55e' },
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': { name: 'Raydium AMM', category: 'dex', color: '#6366f1' },
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': { name: 'Raydium CLMM', category: 'dex', color: '#6366f1' },
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': { name: 'Orca Whirlpool', category: 'dex', color: '#06b6d4' },
+  '9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP': { name: 'Orca v1', category: 'dex', color: '#06b6d4' },
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': { name: 'Meteora DLMM', category: 'dex', color: '#f59e0b' },
+  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB': { name: 'Meteora Pools', category: 'dex', color: '#f59e0b' },
+  'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX': { name: 'Openbook', category: 'dex', color: '#ec4899' },
+  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY': { name: 'Phoenix', category: 'dex', color: '#f97316' },
+
+  // Oracles
+  'FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH': { name: 'Pyth', category: 'oracle', color: '#a855f7' },
+  'pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT': { name: 'Pyth v2', category: 'oracle', color: '#a855f7' },
+  'SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f': { name: 'Switchboard', category: 'oracle', color: '#84cc16' },
+
+  // Lending
+  'So1endDq2YkqhipRh3WViPa8hdiSpxWy6z3Z6tMCpAo': { name: 'Solend', category: 'lending', color: '#14b8a6' },
+  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': { name: 'Marginfi', category: 'lending', color: '#8b5cf6' },
+  'KLend2g3cP87ber41LAK123Z1rFg2wEEgmuuPgidDqd': { name: 'Kamino Lend', category: 'lending', color: '#f43f5e' },
+
+  // Staking / Liquid Staking
+  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD': { name: 'Marinade', category: 'staking', color: '#0ea5e9' },
+  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy': { name: 'Stake Pool', category: 'staking', color: '#3b82f6' },
+  'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': { name: 'Jito Staking', category: 'staking', color: '#10b981' },
+
+  // NFT
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': { name: 'Metaplex', category: 'nft', color: '#f472b6' },
+  'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN': { name: 'Tensor Swap', category: 'nft', color: '#818cf8' },
+  'TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp': { name: 'Tensor cNFT', category: 'nft', color: '#818cf8' },
+  'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K': { name: 'Magic Eden v2', category: 'nft', color: '#e879f9' },
+
+  // Perps / Derivatives
+  'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH': { name: 'Drift', category: 'perps', color: '#fb923c' },
+  'ZETAxsqBRek56DhiGXrn75yj2NHU3aYUnxvHXpkf3aD': { name: 'Zeta', category: 'perps', color: '#4ade80' },
+
+  // Misc
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr': { name: 'Memo', category: 'misc', color: '#94a3b8' },
+  'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo': { name: 'Memo v1', category: 'misc', color: '#94a3b8' },
+};
 
 export interface NetworkStats {
   currentSlot: number;
@@ -174,6 +227,48 @@ export function useRecentBlocks(count: number = 10) {
               const fee = tx.meta?.fee ?? 0;
               const cu = tx.meta?.computeUnitsConsumed ?? 200000;
 
+              // Extract program IDs from account keys
+              const programs: string[] = [];
+              const message = tx.transaction.message;
+
+              // Handle both legacy and versioned transactions
+              if ('accountKeys' in message) {
+                // Legacy transaction
+                const accountKeys = message.accountKeys.map((k: { toBase58?: () => string }) =>
+                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
+                );
+                // Program IDs are typically the accounts that are invoked
+                // We can identify them from the compiled instructions
+                if ('compiledInstructions' in message) {
+                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
+                    const programId = accountKeys[ix.programIdIndex];
+                    if (programId && !programs.includes(programId)) {
+                      programs.push(programId);
+                    }
+                  }
+                } else if ('instructions' in message) {
+                  for (const ix of (message as { instructions: { programIdIndex: number }[] }).instructions) {
+                    const programId = accountKeys[ix.programIdIndex];
+                    if (programId && !programs.includes(programId)) {
+                      programs.push(programId);
+                    }
+                  }
+                }
+              } else if ('staticAccountKeys' in message) {
+                // Versioned transaction (v0)
+                const accountKeys = (message as { staticAccountKeys: { toBase58?: () => string }[] }).staticAccountKeys.map((k) =>
+                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
+                );
+                if ('compiledInstructions' in message) {
+                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
+                    const programId = accountKeys[ix.programIdIndex];
+                    if (programId && !programs.includes(programId)) {
+                      programs.push(programId);
+                    }
+                  }
+                }
+              }
+
               totalFees += fee;
               if (success) successCount++;
               totalCU += cu;
@@ -184,6 +279,7 @@ export function useRecentBlocks(count: number = 10) {
                 fee,
                 computeUnits: cu,
                 slot: s,
+                programs,
               });
             }
           }
@@ -199,7 +295,7 @@ export function useRecentBlocks(count: number = 10) {
             totalFees,
             successRate: txCount > 0 ? (successCount / txCount) * 100 : 100,
             totalCU,
-            transactions: transactions.slice(0, 10), // Keep only first 10 per block
+            transactions: transactions.slice(0, 50), // Keep first 50 per block for better analysis
           };
         } catch {
           return null;
@@ -341,3 +437,38 @@ export function getSolscanUrl(type: 'tx' | 'block' | 'account', id: string | num
 export function truncateSig(sig: string): string {
   return sig.slice(0, 8) + '...' + sig.slice(-4);
 }
+
+// Helper to get program info
+export function getProgramInfo(programId: string): { name: string; category: string; color: string } {
+  return KNOWN_PROGRAMS[programId] || { name: truncateSig(programId), category: 'unknown', color: '#64748b' };
+}
+
+// Helper to get primary program category for a transaction
+export function getTxCategory(programs: string[]): string {
+  // Priority order for categorization
+  const priority = ['dex', 'perps', 'lending', 'nft', 'staking', 'oracle', 'core', 'vote', 'misc', 'unknown'];
+
+  for (const cat of priority) {
+    for (const prog of programs) {
+      const info = KNOWN_PROGRAMS[prog];
+      if (info?.category === cat) {
+        return cat;
+      }
+    }
+  }
+  return 'unknown';
+}
+
+// Category colors for the visualizer
+export const CATEGORY_COLORS: Record<string, string> = {
+  dex: '#22c55e',      // Green - swaps
+  perps: '#fb923c',    // Orange - derivatives
+  lending: '#14b8a6',  // Teal - lending
+  nft: '#f472b6',      // Pink - NFTs
+  staking: '#3b82f6',  // Blue - staking
+  oracle: '#a855f7',   // Purple - oracles
+  core: '#71717a',     // Gray - system
+  vote: '#52525b',     // Dark gray - votes
+  misc: '#94a3b8',     // Light gray - misc
+  unknown: '#64748b',  // Slate - unknown
+};

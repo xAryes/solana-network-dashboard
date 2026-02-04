@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   useNetworkStats,
   useRecentBlocks,
@@ -8,8 +9,12 @@ import {
   formatNumber,
   getSolscanUrl,
   truncateSig,
-  SOLANA_LIMITS
+  SOLANA_LIMITS,
+  getProgramInfo,
+  getTxCategory,
+  CATEGORY_COLORS,
 } from './hooks/useSolanaData';
+import type { SlotData } from './hooks/useSolanaData';
 
 function App() {
   const { stats, isLoading } = useNetworkStats();
@@ -157,6 +162,9 @@ function App() {
 
         {/* CU Distribution */}
         <CUDistribution transactions={transactions} />
+
+        {/* Block Visualizer */}
+        <BlockVisualizer blocks={blocks} />
 
         {/* Two Column Layout: Blocks & Transactions */}
         <div className="grid lg:grid-cols-2 gap-6 mb-10">
@@ -537,6 +545,279 @@ function CUDistribution({ transactions }: { transactions: TransactionInfo[] }) {
               <span className="font-mono text-[var(--text-tertiary)]">~300-800k</span>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Block Visualizer - Shows the internal structure of blocks
+function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
+  const [selectedBlock, setSelectedBlock] = useState<number>(0);
+
+  if (blocks.length === 0) return null;
+
+  const block = blocks[selectedBlock];
+  const txs = block?.transactions || [];
+
+  // Aggregate program stats
+  const programStats = new Map<string, { count: number; cu: number; fees: number; success: number }>();
+  const categoryStats = new Map<string, { count: number; cu: number }>();
+
+  for (const tx of txs) {
+    const category = getTxCategory(tx.programs);
+
+    // Update category stats
+    const catStat = categoryStats.get(category) || { count: 0, cu: 0 };
+    catStat.count++;
+    catStat.cu += tx.computeUnits;
+    categoryStats.set(category, catStat);
+
+    // Update program stats
+    for (const prog of tx.programs) {
+      const info = getProgramInfo(prog);
+      // Skip compute budget and system for cleaner stats
+      if (info.category === 'core' && (info.name === 'Compute Budget' || info.name === 'System' || info.name === 'ATA')) continue;
+
+      const stat = programStats.get(prog) || { count: 0, cu: 0, fees: 0, success: 0 };
+      stat.count++;
+      stat.cu += tx.computeUnits;
+      stat.fees += tx.fee;
+      if (tx.success) stat.success++;
+      programStats.set(prog, stat);
+    }
+  }
+
+  // Sort programs by count
+  const topPrograms = Array.from(programStats.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 8);
+
+  // Sort categories by count
+  const sortedCategories = Array.from(categoryStats.entries())
+    .sort((a, b) => b[1].count - a[1].count);
+
+  const totalTx = txs.length;
+  const blockCuUsed = block?.totalCU || 0;
+  const blockCuPercent = (blockCuUsed / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+
+  return (
+    <section className="mb-10">
+      <SectionHeader title="Block Visualizer" subtitle="Transaction composition analysis" />
+
+      {/* Block Selector */}
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+        {blocks.map((b, i) => (
+          <button
+            key={b.slot}
+            onClick={() => setSelectedBlock(i)}
+            className={`px-3 py-1.5 rounded text-xs font-mono whitespace-nowrap transition-colors ${
+              i === selectedBlock
+                ? 'bg-[var(--accent)] text-[var(--bg-primary)]'
+                : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
+            }`}
+          >
+            {b.slot.toLocaleString()}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* Block Composition Visual */}
+        <div className="card p-4">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+            Block Composition ({totalTx} TXs sampled)
+          </div>
+
+          {/* Visual bar showing transaction types */}
+          <div className="h-8 rounded-lg overflow-hidden flex mb-4">
+            {sortedCategories.map(([cat, stat]) => {
+              const percent = (stat.count / totalTx) * 100;
+              if (percent < 1) return null;
+              return (
+                <div
+                  key={cat}
+                  className="h-full relative group cursor-pointer"
+                  style={{
+                    width: `${percent}%`,
+                    backgroundColor: CATEGORY_COLORS[cat] || CATEGORY_COLORS.unknown,
+                  }}
+                  title={`${cat}: ${stat.count} txs (${percent.toFixed(1)}%)`}
+                >
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 bg-white/10 transition-opacity" />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Category Legend */}
+          <div className="flex flex-wrap gap-3 text-xs">
+            {sortedCategories.map(([cat, stat]) => {
+              const percent = (stat.count / totalTx) * 100;
+              if (percent < 1) return null;
+              return (
+                <div key={cat} className="flex items-center gap-1.5">
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm"
+                    style={{ backgroundColor: CATEGORY_COLORS[cat] || CATEGORY_COLORS.unknown }}
+                  />
+                  <span className="text-[var(--text-secondary)] capitalize">{cat}</span>
+                  <span className="text-[var(--text-muted)] font-mono">{stat.count}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* CU Usage Bar */}
+          <div className="mt-6 pt-4 border-t border-[var(--border-primary)]">
+            <div className="flex justify-between text-xs mb-2">
+              <span className="text-[var(--text-muted)]">Block CU Usage</span>
+              <span className="font-mono text-[var(--text-secondary)]">
+                {formatCU(blockCuUsed)} / {formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)} ({blockCuPercent.toFixed(1)}%)
+              </span>
+            </div>
+            <div className="h-3 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.min(100, blockCuPercent)}%`,
+                  backgroundColor: blockCuPercent > 80 ? 'var(--warning)' : blockCuPercent > 50 ? 'var(--accent)' : 'var(--accent-tertiary)',
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Block Stats */}
+          <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+            <div className="bg-[var(--bg-secondary)] rounded p-2">
+              <div className="text-xs text-[var(--text-muted)]">Success Rate</div>
+              <div className="font-mono text-sm text-[var(--accent-tertiary)]">{(block?.successRate || 100).toFixed(1)}%</div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded p-2">
+              <div className="text-xs text-[var(--text-muted)]">Total Fees</div>
+              <div className="font-mono text-sm">{((block?.totalFees || 0) / 1e9).toFixed(4)} SOL</div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded p-2">
+              <div className="text-xs text-[var(--text-muted)]">Avg CU/TX</div>
+              <div className="font-mono text-sm">{totalTx > 0 ? formatCU(blockCuUsed / block.txCount) : '—'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Top Programs in Block */}
+        <div className="card p-4">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+            Programs in Block
+          </div>
+
+          {topPrograms.length > 0 ? (
+            <div className="space-y-2">
+              {topPrograms.map(([prog, stat]) => {
+                const info = getProgramInfo(prog);
+                const percent = (stat.count / totalTx) * 100;
+                const successRate = stat.count > 0 ? (stat.success / stat.count) * 100 : 100;
+
+                return (
+                  <div key={prog} className="group">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: info.color }}
+                        />
+                        <a
+                          href={getSolscanUrl('account', prog)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-secondary)]"
+                        >
+                          {info.name}
+                        </a>
+                        <span className="text-xs text-[var(--text-muted)] capitalize">({info.category})</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs font-mono">
+                        <span className="text-[var(--text-tertiary)]">{stat.count} txs</span>
+                        <span className={successRate < 95 ? 'text-[var(--warning)]' : 'text-[var(--text-muted)]'}>
+                          {successRate.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${percent}%`, backgroundColor: info.color }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center text-[var(--text-muted)] py-8 text-sm">
+              No program data available
+            </div>
+          )}
+
+          {/* Category Summary */}
+          <div className="mt-6 pt-4 border-t border-[var(--border-primary)]">
+            <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+              Transaction Types
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {sortedCategories.slice(0, 6).map(([cat, stat]) => (
+                <div key={cat} className="flex justify-between items-center py-1.5 px-2 bg-[var(--bg-secondary)] rounded">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: CATEGORY_COLORS[cat] }}
+                    />
+                    <span className="text-[var(--text-secondary)] capitalize">{cat}</span>
+                  </div>
+                  <div className="font-mono text-[var(--text-muted)]">
+                    {formatCU(stat.cu)} CU
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Transaction Stream Preview */}
+      <div className="card mt-4 p-4">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+          Transaction Stream (First 20)
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {txs.slice(0, 40).map((tx, i) => {
+            const category = getTxCategory(tx.programs);
+            return (
+              <a
+                key={tx.signature}
+                href={getSolscanUrl('tx', tx.signature)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-mono hover:scale-110 transition-transform"
+                style={{
+                  backgroundColor: tx.success
+                    ? CATEGORY_COLORS[category] || CATEGORY_COLORS.unknown
+                    : 'var(--error)',
+                  opacity: tx.success ? 1 : 0.7,
+                }}
+                title={`${tx.signature.slice(0, 8)}... | ${formatCU(tx.computeUnits)} CU | ${tx.success ? 'Success' : 'Failed'}`}
+              >
+                {i + 1}
+              </a>
+            );
+          })}
+          {txs.length > 40 && (
+            <div className="w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-mono bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
+              +{txs.length - 40}
+            </div>
+          )}
+        </div>
+        <div className="mt-3 text-xs text-[var(--text-muted)]">
+          Click any transaction to view on Solscan. Colors indicate transaction type. Red = failed.
         </div>
       </div>
     </section>
