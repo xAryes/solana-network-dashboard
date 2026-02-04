@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   useNetworkStats,
   useRecentBlocks,
@@ -8,6 +8,7 @@ import {
   useInflationInfo,
   useClusterInfo,
   useBlockProduction,
+  usePriorityFees,
   formatCU,
   formatNumber,
   getSolscanUrl,
@@ -28,6 +29,7 @@ function App() {
   const { inflation } = useInflationInfo();
   const { cluster } = useClusterInfo();
   const { production } = useBlockProduction();
+  const { fees: priorityFees, isAvailable: priorityFeesAvailable } = usePriorityFees();
 
   // Calculate block averages
   const avgTxPerBlock = blocks.length > 0
@@ -154,7 +156,7 @@ function App() {
         {/* Supply & Economics */}
         <section className="mb-10">
           <SectionHeader title="Supply & Economics" />
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             <StatCard label="Total Supply" value={supply ? formatNumber(supply.total) : '—'} subtext="SOL" accent />
             <StatCard label="Circulating" value={supply ? formatNumber(supply.circulating) : '—'} subtext="SOL" />
             <StatCard label="Non-Circulating" value={supply ? formatNumber(supply.nonCirculating) : '—'} subtext="SOL" />
@@ -174,16 +176,6 @@ function App() {
               value={inflation ? `${inflation.validator.toFixed(2)}%` : '—'}
               subtext="staking yield"
               color="green"
-            />
-            <StatCard
-              label="Foundation"
-              value={inflation ? `${inflation.foundation.toFixed(2)}%` : '—'}
-              subtext="allocation"
-            />
-            <StatCard
-              label="Inflation Epoch"
-              value={inflation ? inflation.epoch.toLocaleString() : '—'}
-              subtext="current"
             />
           </div>
         </section>
@@ -321,17 +313,70 @@ function App() {
           </section>
         </div>
 
-        {/* Priority Fees (Placeholder) */}
+        {/* Priority Fees */}
         <section className="mb-10">
-          <SectionHeader title="Priority Fees" subtitle="Fee market analysis" />
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            <StatCard label="Min Fee" value="—" subtext="lamports/CU" />
-            <StatCard label="Median Fee" value="—" subtext="lamports/CU" />
-            <StatCard label="75th Percentile" value="—" subtext="lamports/CU" />
-            <StatCard label="90th Percentile" value="—" subtext="lamports/CU" />
-            <StatCard label="Max Fee" value="—" subtext="lamports/CU" />
-            <StatCard label="Recommended" value="—" subtext="for fast inclusion" accent />
-          </div>
+          <SectionHeader
+            title="Priority Fees"
+            subtitle={priorityFeesAvailable ? "Real-time fee market" : "Requires Developer+ Helius plan"}
+          />
+          {priorityFeesAvailable && priorityFees ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              <StatCard label="Min Fee" value={priorityFees.min.toLocaleString()} subtext="lamports/CU" />
+              <StatCard label="Median Fee" value={priorityFees.median.toLocaleString()} subtext="lamports/CU" color="green" />
+              <StatCard label="75th Percentile" value={priorityFees.p75.toLocaleString()} subtext="lamports/CU" />
+              <StatCard label="90th Percentile" value={priorityFees.p90.toLocaleString()} subtext="lamports/CU" color="blue" />
+              <StatCard label="Max Fee" value={priorityFees.max.toLocaleString()} subtext="lamports/CU" />
+              <StatCard label="Recommended" value={priorityFees.recommended.toLocaleString()} subtext="for fast inclusion" accent />
+            </div>
+          ) : (
+            <div className="card p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-[var(--text-secondary)] mb-1">Priority Fee Data Unavailable</div>
+                  <div className="text-xs text-[var(--text-muted)]">
+                    This feature requires a Helius Developer plan or higher to access <code className="bg-[var(--bg-tertiary)] px-1 rounded">getRecentPrioritizationFees()</code>
+                  </div>
+                </div>
+                <a
+                  href="https://helius.dev/pricing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-[var(--accent-secondary)] hover:underline whitespace-nowrap ml-4"
+                >
+                  Upgrade Plan →
+                </a>
+              </div>
+              <div className="mt-4 pt-4 border-t border-[var(--border-primary)]">
+                <div className="text-xs text-[var(--text-muted)] mb-2">With Developer+ plan you'll see:</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">Min Fee</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">Median</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">75th %ile</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">90th %ile</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">Max Fee</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                    <div className="text-[var(--text-muted)]">Recommended</div>
+                    <div className="font-mono text-[var(--text-tertiary)]">lamports/CU</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Program Activity (Placeholder) */}
@@ -376,17 +421,7 @@ function App() {
         </section>
 
         {/* Network Limits Reference */}
-        <section className="pt-6 border-t border-[var(--border-primary)]">
-          <SectionHeader title="Network Limits" />
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 text-sm">
-            <LimitCard label="Block CU Limit" value={`${SOLANA_LIMITS.BLOCK_CU_LIMIT / 1e6}M`} />
-            <LimitCard label="TX Default CU" value={`${SOLANA_LIMITS.TX_DEFAULT_CU / 1e3}k`} />
-            <LimitCard label="TX Max CU" value={`${SOLANA_LIMITS.TX_MAX_CU / 1e6}M`} />
-            <LimitCard label="Target Slot Time" value={`${SOLANA_LIMITS.SLOT_TIME_MS}ms`} />
-            <LimitCard label="Slots per Epoch" value="432,000" />
-            <LimitCard label="Epoch Duration" value="~2-3 days" />
-          </div>
-        </section>
+        <NetworkLimitsSection />
       </main>
 
       {/* Footer */}
@@ -477,9 +512,9 @@ function App() {
   );
 }
 
-function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+function SectionHeader({ title, subtitle, noMargin }: { title: string; subtitle?: string; noMargin?: boolean }) {
   return (
-    <div className="flex items-baseline gap-3 mb-4">
+    <div className={`flex items-baseline gap-3 ${noMargin ? '' : 'mb-4'}`}>
       <h2 className="text-sm text-[var(--text-secondary)] uppercase tracking-wider font-medium">{title}</h2>
       {subtitle && <span className="text-xs text-[var(--text-muted)]">{subtitle}</span>}
     </div>
@@ -501,11 +536,14 @@ function StatCard({ label, value, subtext, accent, color }: { label: string; val
   );
 }
 
-function LimitCard({ label, value }: { label: string; value: string }) {
+function LimitCard({ label, value, subtext, highlight }: { label: string; value: string; subtext?: string; highlight?: boolean }) {
   return (
-    <div className="flex justify-between items-center py-2 px-3 bg-[var(--bg-secondary)] rounded">
-      <span className="text-[var(--text-muted)]">{label}</span>
-      <span className="font-mono text-[var(--text-secondary)]">{value}</span>
+    <div className={`flex flex-col py-2 px-3 rounded ${highlight ? 'bg-[var(--accent)]/10 border border-[var(--accent)]/30' : 'bg-[var(--bg-secondary)]'}`}>
+      <div className="flex justify-between items-center">
+        <span className="text-[var(--text-muted)] text-xs">{label}</span>
+        <span className={`font-mono ${highlight ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)]'}`}>{value}</span>
+      </div>
+      {subtext && <span className="text-[10px] text-[var(--text-tertiary)] mt-0.5">{subtext}</span>}
     </div>
   );
 }
@@ -652,80 +690,148 @@ function CUDistribution({ transactions }: { transactions: TransactionInfo[] }) {
 
 // Block Visualizer - Shows the internal structure of blocks
 function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
-  const [selectedBlock, setSelectedBlock] = useState<number>(0);
+  // Track selected block by slot number, not index (prevents jumping when data refreshes)
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+
+  // Find the block that matches our selected slot, or default to first block
+  const selectedIndex = useMemo(() => {
+    if (blocks.length === 0) return 0;
+    if (selectedSlot === null) return 0;
+    const idx = blocks.findIndex(b => b.slot === selectedSlot);
+    return idx >= 0 ? idx : 0;
+  }, [blocks, selectedSlot]);
+
+  const block = blocks[selectedIndex];
+
+  // Handle block selection
+  const handleSelectBlock = useCallback((slot: number) => {
+    setSelectedSlot(slot);
+  }, []);
+
+  // Memoize the expensive computations
+  const { topPrograms, sortedCategories, totalTx, blockCuUsed, blockCuPercent } = useMemo(() => {
+    if (!block) {
+      return { topPrograms: [], sortedCategories: [], totalTx: 0, blockCuUsed: 0, blockCuPercent: 0 };
+    }
+
+    const txs = block.transactions || [];
+    const programStats = new Map<string, { count: number; cu: number; fees: number; success: number }>();
+    const categoryStats = new Map<string, { count: number; cu: number }>();
+
+    for (const tx of txs) {
+      const category = getTxCategory(tx.programs);
+
+      // Update category stats
+      const catStat = categoryStats.get(category) || { count: 0, cu: 0 };
+      catStat.count++;
+      catStat.cu += tx.computeUnits;
+      categoryStats.set(category, catStat);
+
+      // Update program stats
+      for (const prog of tx.programs) {
+        const info = getProgramInfo(prog);
+        // Skip compute budget and system for cleaner stats
+        if (info.category === 'core' && (info.name === 'Compute Budget' || info.name === 'System' || info.name === 'ATA')) continue;
+
+        const stat = programStats.get(prog) || { count: 0, cu: 0, fees: 0, success: 0 };
+        stat.count++;
+        stat.cu += tx.computeUnits;
+        stat.fees += tx.fee;
+        if (tx.success) stat.success++;
+        programStats.set(prog, stat);
+      }
+    }
+
+    // Sort programs by count
+    const topProgs = Array.from(programStats.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 8);
+
+    // Sort categories by count
+    const sortedCats = Array.from(categoryStats.entries())
+      .sort((a, b) => b[1].count - a[1].count);
+
+    const total = txs.length;
+    const cuUsed = block.totalCU || 0;
+    const cuPercent = (cuUsed / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+
+    return {
+      topPrograms: topProgs,
+      sortedCategories: sortedCats,
+      totalTx: total,
+      blockCuUsed: cuUsed,
+      blockCuPercent: cuPercent,
+    };
+  }, [block]);
 
   if (blocks.length === 0) return null;
 
-  const block = blocks[selectedBlock];
-  const txs = block?.transactions || [];
-
-  // Aggregate program stats
-  const programStats = new Map<string, { count: number; cu: number; fees: number; success: number }>();
-  const categoryStats = new Map<string, { count: number; cu: number }>();
-
-  for (const tx of txs) {
-    const category = getTxCategory(tx.programs);
-
-    // Update category stats
-    const catStat = categoryStats.get(category) || { count: 0, cu: 0 };
-    catStat.count++;
-    catStat.cu += tx.computeUnits;
-    categoryStats.set(category, catStat);
-
-    // Update program stats
-    for (const prog of tx.programs) {
-      const info = getProgramInfo(prog);
-      // Skip compute budget and system for cleaner stats
-      if (info.category === 'core' && (info.name === 'Compute Budget' || info.name === 'System' || info.name === 'ATA')) continue;
-
-      const stat = programStats.get(prog) || { count: 0, cu: 0, fees: 0, success: 0 };
-      stat.count++;
-      stat.cu += tx.computeUnits;
-      stat.fees += tx.fee;
-      if (tx.success) stat.success++;
-      programStats.set(prog, stat);
-    }
-  }
-
-  // Sort programs by count
-  const topPrograms = Array.from(programStats.entries())
-    .sort((a, b) => b[1].count - a[1].count)
-    .slice(0, 8);
-
-  // Sort categories by count
-  const sortedCategories = Array.from(categoryStats.entries())
-    .sort((a, b) => b[1].count - a[1].count);
-
-  const totalTx = txs.length;
-  const blockCuUsed = block?.totalCU || 0;
-  const blockCuPercent = (blockCuUsed / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
-
   return (
     <section className="mb-10">
-      <SectionHeader title="Block Visualizer" subtitle="Transaction composition analysis" />
+      <SectionHeader title="Block Visualizer" />
+
+      {/* Selected Block Banner - Prominent indicator */}
+      <div className="card mb-4 p-4 border-l-4 border-l-[var(--accent)] bg-gradient-to-r from-[var(--accent)]/5 to-transparent">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div>
+              <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-1">Currently Analyzing</div>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl font-mono text-[var(--accent)] font-semibold">
+                  {block?.slot.toLocaleString() || '—'}
+                </span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {block?.txCount.toLocaleString()} transactions
+                </span>
+              </div>
+            </div>
+          </div>
+          <a
+            href={block ? getSolscanUrl('block', block.slot) : '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[var(--accent-secondary)] hover:underline font-mono flex items-center gap-1"
+          >
+            View on Solscan ↗
+          </a>
+        </div>
+      </div>
 
       {/* Block Selector */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
-        {blocks.map((b, i) => (
-          <button
-            key={b.slot}
-            onClick={() => setSelectedBlock(i)}
-            className={`px-3 py-1.5 rounded text-xs font-mono whitespace-nowrap transition-colors ${
-              i === selectedBlock
-                ? 'bg-[var(--accent)] text-[var(--bg-primary)]'
-                : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
-            }`}
-          >
-            {b.slot.toLocaleString()}
-          </button>
-        ))}
+      <div className="mb-4">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2">Select Block to Analyze</div>
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          {blocks.map((b) => {
+            const isSelected = b.slot === block?.slot;
+            return (
+              <button
+                key={b.slot}
+                onClick={() => handleSelectBlock(b.slot)}
+                className={`px-4 py-2 rounded-lg text-xs font-mono whitespace-nowrap transition-colors duration-100 flex flex-col items-center gap-1 min-w-[100px] ${
+                  isSelected
+                    ? 'bg-[var(--accent)] text-[var(--bg-primary)] border-2 border-[var(--accent)]'
+                    : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] border border-[var(--border-primary)]'
+                }`}
+              >
+                <span className="text-[11px] opacity-70">{isSelected ? '● Selected' : 'Slot'}</span>
+                <span className="font-semibold">{b.slot.toLocaleString()}</span>
+                <span className="text-[10px] opacity-60">{b.txCount} txs</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Block Composition Visual */}
         <div className="card p-4">
-          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
-            Block Composition ({totalTx} TXs sampled)
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
+              Block Composition
+            </div>
+            <div className="text-xs font-mono text-[var(--text-tertiary)]">
+              {totalTx} TXs sampled
+            </div>
           </div>
 
           {/* Visual bar showing transaction types */}
@@ -805,8 +911,13 @@ function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
 
         {/* Top Programs in Block */}
         <div className="card p-4">
-          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
-            Programs in Block
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
+              Programs in Block
+            </div>
+            <div className="text-xs font-mono text-[var(--accent)]">
+              Slot {block?.slot.toLocaleString()}
+            </div>
           </div>
 
           {topPrograms.length > 0 ? (
@@ -884,11 +995,16 @@ function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
 
       {/* Transaction Stream Preview */}
       <div className="card mt-4 p-4">
-        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
-          Transaction Stream (First 20)
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
+            Transaction Stream
+          </div>
+          <div className="text-xs font-mono text-[var(--accent)]">
+            Slot {block?.slot.toLocaleString()}
+          </div>
         </div>
         <div className="flex flex-wrap gap-1">
-          {txs.slice(0, 40).map((tx, i) => {
+          {(block?.transactions || []).slice(0, 40).map((tx, i) => {
             const category = getTxCategory(tx.programs);
             return (
               <a
@@ -909,9 +1025,9 @@ function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
               </a>
             );
           })}
-          {txs.length > 40 && (
+          {(block?.transactions?.length || 0) > 40 && (
             <div className="w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-mono bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
-              +{txs.length - 40}
+              +{(block?.transactions?.length || 0) - 40}
             </div>
           )}
         </div>
@@ -920,6 +1036,239 @@ function BlockVisualizer({ blocks }: { blocks: SlotData[] }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// Network Limits Section - Comprehensive CU reference post-SIMD upgrades
+function NetworkLimitsSection() {
+  return (
+    <section className="pt-6 border-t border-[var(--border-primary)]">
+      <SectionHeader title="Network Limits & Compute Units" subtitle="Post-SIMD upgrades" />
+
+      {/* Core Protocol Limits */}
+      <div className="mb-6">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">Protocol Limits</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-sm">
+          <LimitCard label="Block CU Limit" value={`${SOLANA_LIMITS.BLOCK_CU_LIMIT / 1e6}M`} highlight />
+          <LimitCard label="TX Max CU" value={`${SOLANA_LIMITS.TX_MAX_CU / 1e6}M`} />
+          <LimitCard label="TX Default CU" value={`${SOLANA_LIMITS.TX_DEFAULT_CU / 1e3}k`} />
+          <LimitCard label="Target Slot Time" value={`${SOLANA_LIMITS.SLOT_TIME_MS}ms`} />
+          <LimitCard label="Slots per Epoch" value="432,000" />
+          <LimitCard label="Epoch Duration" value="~2-3 days" />
+        </div>
+      </div>
+
+      {/* Per-Account Limits (SIMD-83 / SIMD-110) */}
+      <div className="mb-6">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+          Per-Account Write Locks <span className="text-[var(--accent-secondary)]">(SIMD-83)</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <LimitCard label="Max CU per Account" value="12M" subtext="per block" />
+          <LimitCard label="Write Lock Limit" value="12M CU" subtext="single account" />
+          <LimitCard label="Read Lock" value="Unlimited" subtext="no CU limit" />
+          <LimitCard label="Account Throughput" value="~30 TXs" subtext="heavy ops/account" />
+        </div>
+      </div>
+
+      {/* Transaction Size Limits */}
+      <div className="mb-6">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">Transaction Limits</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-sm">
+          <LimitCard label="Max TX Size" value="1,232" subtext="bytes" />
+          <LimitCard label="Max Accounts" value="64" subtext="per TX" />
+          <LimitCard label="Max Instructions" value="~40" subtext="practical limit" />
+          <LimitCard label="Signature Limit" value="127" subtext="per TX" />
+          <LimitCard label="Base Fee" value="5,000" subtext="lamports" />
+          <LimitCard label="Priority Fee" value="variable" subtext="per CU" />
+        </div>
+      </div>
+
+      {/* Compute Unit Costs by Operation */}
+      <div className="card p-4">
+        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-4">
+          CU Costs by Operation Type
+        </div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Basic Operations */}
+          <div>
+            <div className="text-xs text-[var(--accent-tertiary)] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--accent-tertiary)]" />
+              Basic Operations
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="SOL Transfer" cu="~300-450" />
+              <CUCostRow op="SPL Token Transfer" cu="~2,000-4,500" />
+              <CUCostRow op="Token-2022 Transfer" cu="~4,000-8,000" />
+              <CUCostRow op="Create ATA" cu="~4,500" />
+              <CUCostRow op="Close Account" cu="~2,000" />
+              <CUCostRow op="Memo Instruction" cu="~100-500" />
+            </div>
+          </div>
+
+          {/* DeFi Operations */}
+          <div>
+            <div className="text-xs text-[var(--success)] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--success)]" />
+              DeFi / DEX
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="Jupiter Swap (simple)" cu="~80,000-150,000" />
+              <CUCostRow op="Jupiter Swap (multi-hop)" cu="~200,000-400,000" />
+              <CUCostRow op="Raydium AMM Swap" cu="~50,000-100,000" />
+              <CUCostRow op="Raydium CLMM Swap" cu="~80,000-150,000" />
+              <CUCostRow op="Orca Whirlpool Swap" cu="~60,000-120,000" />
+              <CUCostRow op="Meteora DLMM Swap" cu="~100,000-200,000" />
+              <CUCostRow op="Openbook/Phoenix Limit" cu="~30,000-60,000" />
+            </div>
+          </div>
+
+          {/* Lending & Perps */}
+          <div>
+            <div className="text-xs text-[var(--accent-secondary)] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
+              Lending & Perps
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="Marginfi Deposit" cu="~50,000-80,000" />
+              <CUCostRow op="Marginfi Borrow" cu="~60,000-100,000" />
+              <CUCostRow op="Kamino Lend Supply" cu="~80,000-120,000" />
+              <CUCostRow op="Solend Deposit" cu="~40,000-70,000" />
+              <CUCostRow op="Drift Open Position" cu="~200,000-350,000" />
+              <CUCostRow op="Drift Liquidation" cu="~400,000-800,000" />
+              <CUCostRow op="Zeta Trade" cu="~150,000-300,000" />
+            </div>
+          </div>
+
+          {/* Staking Operations */}
+          <div>
+            <div className="text-xs text-[#3b82f6] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#3b82f6]" />
+              Staking
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="Create Stake Account" cu="~3,000-5,000" />
+              <CUCostRow op="Delegate Stake" cu="~3,000-5,000" />
+              <CUCostRow op="Deactivate Stake" cu="~2,000-3,000" />
+              <CUCostRow op="Withdraw Stake" cu="~3,000-5,000" />
+              <CUCostRow op="Marinade Stake" cu="~30,000-60,000" />
+              <CUCostRow op="Jito Stake SOL" cu="~40,000-80,000" />
+              <CUCostRow op="LST Unstake" cu="~50,000-100,000" />
+            </div>
+          </div>
+
+          {/* NFT Operations */}
+          <div>
+            <div className="text-xs text-[#f472b6] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#f472b6]" />
+              NFT & Metaplex
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="NFT Mint (simple)" cu="~50,000-80,000" />
+              <CUCostRow op="NFT Mint (collection)" cu="~80,000-150,000" />
+              <CUCostRow op="cNFT Mint" cu="~20,000-40,000" />
+              <CUCostRow op="NFT Transfer" cu="~20,000-40,000" />
+              <CUCostRow op="Tensor Buy/Sell" cu="~100,000-200,000" />
+              <CUCostRow op="Magic Eden Trade" cu="~100,000-180,000" />
+              <CUCostRow op="Update Metadata" cu="~30,000-60,000" />
+            </div>
+          </div>
+
+          {/* Infrastructure */}
+          <div>
+            <div className="text-xs text-[#a855f7] font-medium mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#a855f7]" />
+              Infrastructure
+            </div>
+            <div className="space-y-1.5 text-xs">
+              <CUCostRow op="Pyth Price Update" cu="~5,000-15,000" />
+              <CUCostRow op="Switchboard Update" cu="~10,000-30,000" />
+              <CUCostRow op="Vote Transaction" cu="~2,000-3,000" />
+              <CUCostRow op="Compute Budget Set" cu="~150" />
+              <CUCostRow op="Priority Fee Set" cu="~150" />
+              <CUCostRow op="Address Lookup Table" cu="~2,000-4,000" />
+            </div>
+          </div>
+        </div>
+
+        {/* SIMD Upgrade Notes */}
+        <div className="mt-6 pt-4 border-t border-[var(--border-primary)]">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+            Recent SIMD Upgrades
+          </div>
+          <div className="grid md:grid-cols-2 gap-4 text-xs">
+            <div className="bg-[var(--bg-secondary)] rounded p-3">
+              <div className="font-medium text-[var(--text-secondary)] mb-1">SIMD-83: Writable Account Limits</div>
+              <div className="text-[var(--text-muted)]">
+                12M CU cap per writable account per block. Prevents single hot accounts from consuming all block space.
+              </div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded p-3">
+              <div className="font-medium text-[var(--text-secondary)] mb-1">SIMD-110: Compute Budget</div>
+              <div className="text-[var(--text-muted)]">
+                More granular CU pricing and improved compute budget instruction handling for better fee estimation.
+              </div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded p-3">
+              <div className="font-medium text-[var(--text-secondary)] mb-1">Block CU: 48M → 60M</div>
+              <div className="text-[var(--text-muted)]">
+                Block compute limit increased from 48M to 60M CU, enabling ~25% more throughput per block.
+              </div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded p-3">
+              <div className="font-medium text-[var(--text-secondary)] mb-1">TX Max: 1.4M CU</div>
+              <div className="text-[var(--text-muted)]">
+                Single transaction can request up to 1.4M compute units. Default is 200k if not specified.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Best Practices */}
+        <div className="mt-4 pt-4 border-t border-[var(--border-primary)]">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">
+            CU Optimization Tips
+          </div>
+          <div className="grid md:grid-cols-3 gap-3 text-xs text-[var(--text-muted)]">
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>Always set compute budget to avoid overpaying. Use <code className="text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1 rounded">setComputeUnitLimit</code></span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>Simulate transactions first to get accurate CU consumption</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>Use Address Lookup Tables (ALTs) to fit more accounts in a TX</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>Priority fees are per CU - lower CU = lower total priority fee cost</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>Hot accounts may hit 12M CU/block limit during congestion</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--accent-tertiary)]">→</span>
+              <span>cNFTs use ~80% less CU than traditional NFT mints</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Helper component for CU cost rows
+function CUCostRow({ op, cu }: { op: string; cu: string }) {
+  return (
+    <div className="flex justify-between items-center py-1 px-2 bg-[var(--bg-secondary)] rounded">
+      <span className="text-[var(--text-muted)]">{op}</span>
+      <span className="font-mono text-[var(--text-tertiary)]">{cu}</span>
+    </div>
   );
 }
 

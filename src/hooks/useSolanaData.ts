@@ -339,7 +339,8 @@ export function useRecentBlocks(count: number = 10) {
 
   useEffect(() => {
     fetchBlocks();
-    const interval = setInterval(fetchBlocks, 5000);
+    // Slower refresh rate (8s) to reduce lag and UI jank
+    const interval = setInterval(fetchBlocks, 8000);
     return () => clearInterval(interval);
   }, [fetchBlocks]);
 
@@ -529,6 +530,91 @@ export function useBlockProduction() {
   }, []);
 
   return { production, isLoading };
+}
+
+// Priority fee info interface
+export interface PriorityFeeInfo {
+  min: number;
+  median: number;
+  p75: number;
+  p90: number;
+  max: number;
+  recommended: number;
+  available: boolean;
+}
+
+// Get priority fees - requires Developer+ Helius plan
+export function usePriorityFees() {
+  const [fees, setFees] = useState<PriorityFeeInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAvailable, setIsAvailable] = useState(true);
+
+  useEffect(() => {
+    const fetchFees = async () => {
+      try {
+        const connection = getConnection();
+
+        // Try to fetch recent prioritization fees
+        // This requires Developer+ Helius plan
+        const recentFees = await connection.getRecentPrioritizationFees();
+
+        if (recentFees && recentFees.length > 0) {
+          // Extract fee values and sort
+          const feeValues = recentFees
+            .map(f => f.prioritizationFee)
+            .filter(f => f > 0)
+            .sort((a, b) => a - b);
+
+          if (feeValues.length > 0) {
+            const min = feeValues[0];
+            const max = feeValues[feeValues.length - 1];
+            const median = feeValues[Math.floor(feeValues.length / 2)];
+            const p75 = feeValues[Math.floor(feeValues.length * 0.75)];
+            const p90 = feeValues[Math.floor(feeValues.length * 0.90)];
+            // Recommended: slightly above median for good inclusion
+            const recommended = Math.ceil(median * 1.2);
+
+            setFees({
+              min,
+              median,
+              p75,
+              p90,
+              max,
+              recommended,
+              available: true,
+            });
+            setIsAvailable(true);
+          } else {
+            // No fees found (all zero)
+            setFees({
+              min: 0,
+              median: 0,
+              p75: 0,
+              p90: 0,
+              max: 0,
+              recommended: 0,
+              available: true,
+            });
+            setIsAvailable(true);
+          }
+        } else {
+          setIsAvailable(false);
+        }
+        setIsLoading(false);
+      } catch (err) {
+        // Method not available on this plan
+        console.warn('Priority fees not available (requires Developer+ plan):', err);
+        setIsAvailable(false);
+        setIsLoading(false);
+      }
+    };
+
+    fetchFees();
+    const interval = setInterval(fetchFees, 10000); // Every 10s for fees
+    return () => clearInterval(interval);
+  }, []);
+
+  return { fees, isLoading, isAvailable };
 }
 
 // Helper to format SOL
