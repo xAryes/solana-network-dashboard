@@ -339,8 +339,8 @@ export function useRecentBlocks(count: number = 10) {
 
   useEffect(() => {
     fetchBlocks();
-    // Slower refresh rate (8s) to reduce lag and UI jank
-    const interval = setInterval(fetchBlocks, 8000);
+    // Slower refresh rate (15s) to reduce API rate limiting
+    const interval = setInterval(fetchBlocks, 15000);
     return () => clearInterval(interval);
   }, [fetchBlocks]);
 
