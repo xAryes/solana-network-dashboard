@@ -155,6 +155,9 @@ function App() {
           </div>
         </section>
 
+        {/* CU Distribution */}
+        <CUDistribution transactions={transactions} />
+
         {/* Two Column Layout: Blocks & Transactions */}
         <div className="grid lg:grid-cols-2 gap-6 mb-10">
           {/* Recent Blocks */}
@@ -408,6 +411,136 @@ function formatTimeRemaining(seconds: number): string {
     return `${days}d ${hours % 24}h`;
   }
   return `${hours}h ${minutes}m`;
+}
+
+// CU Distribution analysis
+interface TransactionInfo {
+  signature: string;
+  success: boolean;
+  fee: number;
+  computeUnits: number;
+  slot: number;
+}
+
+const CU_CATEGORIES = [
+  { name: 'Micro', range: '< 5k', min: 0, max: 5000, color: 'var(--text-tertiary)', description: 'Simple transfers, memo' },
+  { name: 'Light', range: '5k-50k', min: 5000, max: 50000, color: 'var(--accent-tertiary)', description: 'Token transfers, basic ops' },
+  { name: 'Medium', range: '50k-200k', min: 50000, max: 200000, color: 'var(--accent-secondary)', description: 'Simple swaps, staking' },
+  { name: 'Heavy', range: '200k-500k', min: 200000, max: 500000, color: 'var(--accent)', description: 'Complex DeFi, multi-hop' },
+  { name: 'Compute', range: '> 500k', min: 500000, max: Infinity, color: 'var(--warning)', description: 'Heavy compute, liquidations' },
+];
+
+function CUDistribution({ transactions }: { transactions: TransactionInfo[] }) {
+  if (transactions.length === 0) {
+    return null;
+  }
+
+  // Categorize transactions
+  const categories = CU_CATEGORIES.map(cat => ({
+    ...cat,
+    count: transactions.filter(tx => tx.computeUnits >= cat.min && tx.computeUnits < cat.max).length,
+    totalCU: transactions.filter(tx => tx.computeUnits >= cat.min && tx.computeUnits < cat.max)
+      .reduce((sum, tx) => sum + tx.computeUnits, 0),
+  }));
+
+  const totalTx = transactions.length;
+  const totalCU = transactions.reduce((sum, tx) => sum + tx.computeUnits, 0);
+  const avgCU = totalTx > 0 ? totalCU / totalTx : 0;
+  const maxCU = Math.max(...transactions.map(tx => tx.computeUnits));
+  const minCU = Math.min(...transactions.map(tx => tx.computeUnits));
+
+  return (
+    <section className="mb-10">
+      <SectionHeader title="Compute Unit Distribution" subtitle={`${totalTx} transactions analyzed`} />
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Avg CU/TX" value={formatCU(avgCU)} color="green" />
+        <StatCard label="Min CU" value={formatCU(minCU)} />
+        <StatCard label="Max CU" value={formatCU(maxCU)} />
+        <StatCard label="Total CU" value={formatCU(totalCU)} />
+      </div>
+
+      {/* Distribution bars */}
+      <div className="card p-4">
+        <div className="space-y-3">
+          {categories.map(cat => {
+            const percent = totalTx > 0 ? (cat.count / totalTx) * 100 : 0;
+
+            return (
+              <div key={cat.name} className="group">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }} />
+                    <span className="text-sm text-[var(--text-secondary)] font-medium w-16">{cat.name}</span>
+                    <span className="text-xs text-[var(--text-muted)] font-mono">{cat.range}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs font-mono">
+                    <span className="text-[var(--text-tertiary)] w-20 text-right">{cat.count} txs ({percent.toFixed(0)}%)</span>
+                    <span className="text-[var(--text-muted)] w-24 text-right">{formatCU(cat.totalCU)} CU</span>
+                  </div>
+                </div>
+
+                {/* TX count bar */}
+                <div className="flex gap-2 items-center">
+                  <div className="flex-1 h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${percent}%`, backgroundColor: cat.color }}
+                    />
+                  </div>
+                </div>
+
+                {/* Description on hover */}
+                <div className="text-xs text-[var(--text-muted)] mt-1 opacity-60">
+                  {cat.description}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Typical CU requirements reference */}
+        <div className="mt-6 pt-4 border-t border-[var(--border-primary)]">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3">Typical CU Requirements</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">SOL Transfer</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~450</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Token Transfer</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~3k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Jupiter Swap</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~80-300k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">NFT Mint</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~50-150k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Stake Account</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~5k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Raydium Swap</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~50-100k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Margin Trade</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~200-400k</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Liquidation</span>
+              <span className="font-mono text-[var(--text-tertiary)]">~300-800k</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export default App;
