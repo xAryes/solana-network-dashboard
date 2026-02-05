@@ -716,39 +716,70 @@ export function getProgramInfo(programId: string): { name: string; category: str
   return KNOWN_PROGRAMS[programId] || { name: truncateSig(programId), category: 'unknown', color: '#64748b' };
 }
 
-// Validator Names Cache
+// Validator Info Cache (names, logos, locations)
+export interface ValidatorMetadata {
+  name: string;
+  logo?: string;
+  location?: string;
+  datacenter?: string;
+}
+
+const validatorInfoCache = new Map<string, ValidatorMetadata>();
+let validatorInfoFetched = false;
+
+// Legacy cache for backward compatibility
 const validatorNamesCache = new Map<string, string>();
 let validatorNamesFetched = false;
 
-// Fetch validator names from Stakewiz API (free, comprehensive)
-export async function fetchValidatorNames(): Promise<Map<string, string>> {
-  if (validatorNamesFetched && validatorNamesCache.size > 0) {
-    return validatorNamesCache;
+// Fetch validator info from Stakewiz API (free, comprehensive)
+export async function fetchValidatorInfo(): Promise<Map<string, ValidatorMetadata>> {
+  if (validatorInfoFetched && validatorInfoCache.size > 0) {
+    return validatorInfoCache;
   }
 
   try {
-    // Stakewiz provides a comprehensive validator list with names
+    // Stakewiz provides a comprehensive validator list with names, logos, and datacenter info
     const response = await fetch('https://api.stakewiz.com/validators');
-    if (!response.ok) throw new Error('Failed to fetch validator names');
+    if (!response.ok) throw new Error('Failed to fetch validator info');
 
     const data = await response.json();
 
     for (const v of data) {
-      if (v.vote_identity && v.name) {
-        validatorNamesCache.set(v.vote_identity, v.name);
+      const info: ValidatorMetadata = {
+        name: v.name || v.vote_identity?.slice(0, 8) + '...',
+        logo: v.avatar_url || v.keybase_avatar_url || undefined,
+        location: v.data_center_city ? `${v.data_center_city}, ${v.data_center_country}` : v.data_center_country,
+        datacenter: v.data_center_key,
+      };
+
+      if (v.vote_identity) {
+        validatorInfoCache.set(v.vote_identity, info);
+        validatorNamesCache.set(v.vote_identity, info.name);
       }
-      // Also map by identity (node pubkey)
-      if (v.identity && v.name) {
-        validatorNamesCache.set(v.identity, v.name);
+      if (v.identity) {
+        validatorInfoCache.set(v.identity, info);
+        validatorNamesCache.set(v.identity, info.name);
       }
     }
 
+    validatorInfoFetched = true;
     validatorNamesFetched = true;
-    return validatorNamesCache;
+    return validatorInfoCache;
   } catch (err) {
-    console.warn('Failed to fetch validator names:', err);
-    return validatorNamesCache;
+    console.warn('Failed to fetch validator info:', err);
+    return validatorInfoCache;
   }
+}
+
+// Get validator metadata by pubkey
+export function getValidatorMetadata(pubkey: string): ValidatorMetadata | null {
+  return validatorInfoCache.get(pubkey) || null;
+}
+
+// Fetch validator names (legacy, calls fetchValidatorInfo)
+export async function fetchValidatorNames(): Promise<Map<string, string>> {
+  await fetchValidatorInfo();
+  return validatorNamesCache;
 }
 
 // Hook to get validator names
@@ -763,8 +794,8 @@ export function useValidatorNames() {
       return;
     }
 
-    fetchValidatorNames().then((fetchedNames) => {
-      setNames(new Map(fetchedNames));
+    fetchValidatorInfo().then(() => {
+      setNames(new Map(validatorNamesCache));
       setIsLoading(false);
     });
   }, []);
@@ -773,7 +804,11 @@ export function useValidatorNames() {
     return names.get(pubkey) || null;
   }, [names]);
 
-  return { names, getName, isLoading };
+  const getMetadata = useCallback((pubkey: string): ValidatorMetadata | null => {
+    return validatorInfoCache.get(pubkey) || null;
+  }, []);
+
+  return { names, getName, getMetadata, isLoading };
 }
 
 // Helper to get primary program category for a transaction
