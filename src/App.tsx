@@ -12,7 +12,7 @@ import {
   useLiveTransactions,
   useTopValidators,
   useValidatorNames,
-  useHistoricalStats,
+  useNetworkHistory,
   formatCU,
   formatNumber,
   getSolscanUrl,
@@ -22,7 +22,7 @@ import {
   getTxCategory,
   CATEGORY_COLORS,
 } from './hooks/useSolanaData';
-import type { SlotData, LiveTransaction, LeaderScheduleInfo, ValidatorMetadata, HistoricalStats } from './hooks/useSolanaData';
+import type { SlotData, LiveTransaction, LeaderScheduleInfo, ValidatorMetadata, EpochNetworkStats } from './hooks/useSolanaData';
 
 // Generate a gradient color based on pubkey for avatar fallback
 function getAvatarGradient(pubkey: string): string {
@@ -97,7 +97,7 @@ function App() {
   const { transactions: liveTxs, isConnected: wsConnected } = useLiveTransactions(30);
   const { validatorInfo: topValidators } = useTopValidators(15);
   const { getName: getValidatorName, getMetadata: getValidatorMetadata } = useValidatorNames();
-  const { stats: historicalStats } = useHistoricalStats(24);
+  const networkHistory = useNetworkHistory(5);
 
   // Active section tracking for navigation
   const [activeSection, setActiveSection] = useState('overview');
@@ -431,8 +431,8 @@ function App() {
         {/* In-House Analytics */}
         <AnalyticsSection blocks={blocks} transactions={transactions} />
 
-        {/* Historical Stats (24h) */}
-        <HistoricalStatsSection stats={historicalStats} />
+        {/* Network History - Real epoch data from Solana Compass */}
+        <NetworkHistorySection data={networkHistory} />
 
         {/* Live Transaction Stream */}
         <LiveTransactionStream transactions={liveTxs} isConnected={wsConnected} />
@@ -847,155 +847,225 @@ function CUDistribution({ transactions }: { transactions: TransactionInfo[] }) {
   );
 }
 
-// Historical Stats Section - Shows accumulated data over time
-function HistoricalStatsSection({ stats }: { stats: HistoricalStats | null }) {
-  if (!stats || stats.blocks < 10) {
+// Network History Section - Real epoch data from Solana Compass API
+function NetworkHistorySection({ data }: { data: { currentEpoch: EpochNetworkStats | null; previousEpochs: EpochNetworkStats[]; isLoading: boolean; error: string | null } }) {
+  if (data.isLoading) {
     return (
       <section className="mb-10">
-        <SectionHeader title="Historical Stats (24h)" subtitle="Accumulating data..." />
+        <SectionHeader title="Epoch Analytics" subtitle="Loading historical data..." />
         <div className="card p-6">
-          <div className="text-center py-8">
-            <div className="text-4xl mb-3">📊</div>
-            <div className="text-[var(--text-secondary)] mb-2">Building Historical Database</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              Data is being collected as you browse. Check back in a few minutes for charts and trends.
-            </div>
-            {stats && stats.blocks > 0 && (
-              <div className="mt-4 text-xs text-[var(--text-tertiary)]">
-                {stats.blocks} blocks collected so far...
-              </div>
-            )}
+          <div className="flex items-center justify-center py-8 gap-3">
+            <div className="spinner" />
+            <span className="text-[var(--text-muted)]">Fetching epoch data from Solana Compass...</span>
           </div>
         </div>
       </section>
     );
   }
 
+  if (data.error || !data.currentEpoch) {
+    return (
+      <section className="mb-10">
+        <SectionHeader title="Epoch Analytics" subtitle="Historical network data" />
+        <div className="card p-6 text-center py-8">
+          <div className="text-[var(--text-muted)]">Unable to load historical data</div>
+        </div>
+      </section>
+    );
+  }
+
+  const current = data.currentEpoch;
+  const allEpochs = [current, ...data.previousEpochs];
+
   // Format helpers
-  const formatFee = (lamports: number) => {
-    if (lamports >= 1e9) return `${(lamports / 1e9).toFixed(2)} SOL`;
-    if (lamports >= 1e6) return `${(lamports / 1e6).toFixed(1)}M L`;
-    if (lamports >= 1e3) return `${(lamports / 1e3).toFixed(1)}k L`;
-    return `${lamports.toFixed(0)} L`;
+  const formatSOL = (lamports: number) => {
+    const sol = lamports / 1e9;
+    if (sol >= 1000) return `${(sol / 1000).toFixed(1)}k`;
+    return sol.toFixed(2);
   };
 
-  // Mini sparkline chart
-  const Sparkline = ({ data, color, height = 40 }: { data: { value: number }[]; color: string; height?: number }) => {
-    if (data.length < 2) return null;
-    const max = Math.max(...data.map(d => d.value));
-    const min = Math.min(...data.map(d => d.value));
-    const range = max - min || 1;
-    const width = 200;
-    const points = data.map((d, i) => {
-      const x = (i / (data.length - 1)) * width;
-      const y = height - ((d.value - min) / range) * (height - 4);
-      return `${x},${y}`;
-    }).join(' ');
+  const formatLamports = (lamports: number) => {
+    if (lamports >= 1e12) return `${(lamports / 1e12).toFixed(2)}T`;
+    if (lamports >= 1e9) return `${(lamports / 1e9).toFixed(2)}B`;
+    if (lamports >= 1e6) return `${(lamports / 1e6).toFixed(1)}M`;
+    if (lamports >= 1e3) return `${(lamports / 1e3).toFixed(1)}k`;
+    return lamports.toLocaleString();
+  };
 
+  const formatCompact = (num: number) => {
+    if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
+    if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+    if (num >= 1e3) return `${(num / 1e3).toFixed(1)}k`;
+    return num.toLocaleString();
+  };
+
+  // Mini bar chart for comparison
+  const ComparisonBar = ({ current: curr, max, color }: { current: number; max: number; color: string }) => {
+    const pct = max > 0 ? (curr / max) * 100 : 0;
     return (
-      <svg width={width} height={height} className="overflow-visible">
-        <polyline
-          points={points}
-          fill="none"
-          stroke={color}
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
+      </div>
     );
   };
 
   return (
     <section className="mb-10">
-      <SectionHeader title="Historical Stats (24h)" subtitle={`${stats.blocks.toLocaleString()} blocks analyzed`} />
+      <SectionHeader
+        title="Epoch Analytics"
+        subtitle={`Epoch ${current.epoch} • Data from Solana Compass`}
+      />
       <div className="card p-6">
-        {/* Key Metrics */}
+        {/* Current Epoch Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
           <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Total Slots</div>
+            <div className="text-lg font-mono font-bold text-[var(--text-primary)]">{formatCompact(current.totalSlots)}</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">Skip: {current.skipRate.toFixed(2)}%</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
             <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Transactions</div>
-            <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{stats.transactions.toLocaleString()}</div>
+            <div className="text-lg font-mono font-bold text-[var(--text-primary)]">{formatCompact(current.totalTransactions)}</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">Non-vote: {formatCompact(current.nonVoteTransactions)}</div>
           </div>
           <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
             <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Success Rate</div>
-            <div className="text-xl font-mono font-bold text-[var(--success)]">{stats.successRate.toFixed(1)}%</div>
+            <div className="text-lg font-mono font-bold text-[var(--success)]">{current.successRate.toFixed(1)}%</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">Failed: {formatCompact(current.failedTx)}</div>
           </div>
           <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
-            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Avg TX/Block</div>
-            <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{stats.avgTxPerBlock.toFixed(0)}</div>
-          </div>
-          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
-            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Avg CU %</div>
-            <div className="text-xl font-mono font-bold text-[var(--text-secondary)]">{stats.avgCuPercent.toFixed(1)}%</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Avg Block Time</div>
+            <div className="text-lg font-mono font-bold text-[var(--text-secondary)]">{current.avgBlockTime.toFixed(0)}ms</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">Median: {current.medianBlockTime.toFixed(0)}ms</div>
           </div>
           <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
             <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Total Fees</div>
-            <div className="text-xl font-mono font-bold text-[var(--accent)]">{formatFee(stats.totalFees)}</div>
+            <div className="text-lg font-mono font-bold text-[var(--accent)]">{formatSOL(current.totalFees)} SOL</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">Priority: {formatSOL(current.priorityFees)}</div>
           </div>
           <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
             <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Jito Tips</div>
-            <div className="text-xl font-mono font-bold text-[var(--accent-tertiary)]">{formatFee(stats.jitoTips)}</div>
+            <div className="text-lg font-mono font-bold text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} SOL</div>
+            <div className="text-[10px] text-[var(--text-tertiary)]">{formatCompact(current.jitoTransactions)} txs</div>
           </div>
         </div>
 
-        {/* Charts Row */}
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* TPS History */}
+        {/* Fee Breakdown */}
+        <div className="grid md:grid-cols-3 gap-4 mb-6">
           <div className="p-4 rounded-lg bg-[var(--bg-secondary)]">
-            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">TPS Trend</div>
-            <div className="flex items-end justify-between gap-4">
-              <Sparkline
-                data={stats.tpsHistory.map(p => ({ value: p.tps }))}
-                color="var(--accent)"
-                height={50}
-              />
-              <div className="text-right">
-                <div className="text-2xl font-mono font-bold text-[var(--accent)]">
-                  {stats.tpsHistory.length > 0 ? stats.tpsHistory[stats.tpsHistory.length - 1].tps : 0}
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Fee Distribution</div>
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[var(--text-muted)]">Base Fees</span>
+                  <span className="font-mono text-[var(--text-secondary)]">{formatSOL(current.baseFees)} SOL</span>
                 </div>
-                <div className="text-[10px] text-[var(--text-muted)]">Current TPS</div>
+                <ComparisonBar current={current.baseFees} max={current.totalFees} color="var(--text-tertiary)" />
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[var(--text-muted)]">Priority Fees</span>
+                  <span className="font-mono text-[var(--accent)]">{formatSOL(current.priorityFees)} SOL</span>
+                </div>
+                <ComparisonBar current={current.priorityFees} max={current.totalFees} color="var(--accent)" />
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[var(--text-muted)]">Jito MEV Tips</span>
+                  <span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} SOL</span>
+                </div>
+                <ComparisonBar current={current.jitoTips} max={current.totalFees} color="var(--accent-tertiary)" />
               </div>
             </div>
           </div>
 
-          {/* Fee History */}
           <div className="p-4 rounded-lg bg-[var(--bg-secondary)]">
-            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Avg Fee Trend</div>
-            <div className="flex items-end justify-between gap-4">
-              <Sparkline
-                data={stats.feeHistory.map(p => ({ value: p.avgFee }))}
-                color="var(--warning)"
-                height={50}
-              />
-              <div className="text-right">
-                <div className="text-2xl font-mono font-bold text-[var(--warning)]">
-                  {formatFee(stats.avgFeePerTx)}
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Jito MEV Stats</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Avg Tip</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{formatLamports(current.avgJitoTip)} L</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Median Tip</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{formatLamports(current.medianJitoTip)} L</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Jito TXs</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{formatCompact(current.jitoTransactions)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Jito %</div>
+                <div className="text-sm font-mono text-[var(--accent-tertiary)]">
+                  {current.totalTransactions > 0 ? ((current.jitoTransactions / current.totalTransactions) * 100).toFixed(1) : 0}%
                 </div>
-                <div className="text-[10px] text-[var(--text-muted)]">Avg per TX</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Network Efficiency</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Packed Slots</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{formatCompact(current.packedSlots)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Skip Rate</div>
+                <div className="text-sm font-mono text-[var(--warning)]">{current.skipRate.toFixed(2)}%</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Fee Ratio</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{current.avgFeeRatio.toFixed(1)}x</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)]">Avg CU/Block</div>
+                <div className="text-sm font-mono text-[var(--text-primary)]">{formatCompact(current.avgCUPerBlock)}</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Category Breakdown */}
-        <div className="mt-6 p-4 rounded-lg bg-[var(--bg-secondary)]">
-          <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Transaction Categories</div>
-          <div className="flex flex-wrap gap-3">
-            {Object.entries(stats.categoryBreakdown)
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 8)
-              .map(([cat, count]) => {
-                const pct = (count / stats.transactions) * 100;
-                const color = CATEGORY_COLORS[cat] || '#64748b';
-                return (
-                  <div key={cat} className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="text-sm text-[var(--text-secondary)] capitalize">{cat}</span>
-                    <span className="text-xs font-mono text-[var(--text-muted)]">{pct.toFixed(1)}%</span>
-                  </div>
-                );
-              })}
+        {/* Epoch Comparison Table */}
+        {allEpochs.length > 1 && (
+          <div className="overflow-x-auto">
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Epoch Comparison</div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[var(--text-muted)] border-b border-[var(--border-primary)]">
+                  <th className="py-2 pr-4">Epoch</th>
+                  <th className="py-2 pr-4 text-right">Transactions</th>
+                  <th className="py-2 pr-4 text-right">Success</th>
+                  <th className="py-2 pr-4 text-right">Block Time</th>
+                  <th className="py-2 pr-4 text-right">Fees (SOL)</th>
+                  <th className="py-2 text-right">Jito (SOL)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allEpochs.map((epoch, i) => (
+                  <tr key={epoch.epoch} className={`border-b border-[var(--border-primary)] ${i === 0 ? 'bg-[var(--accent)]/5' : ''}`}>
+                    <td className="py-2 pr-4 font-mono">
+                      <span className={i === 0 ? 'text-[var(--accent)] font-medium' : 'text-[var(--text-secondary)]'}>
+                        {epoch.epoch}
+                      </span>
+                      {i === 0 && <span className="text-[10px] text-[var(--text-muted)] ml-1">(current)</span>}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-[var(--text-secondary)]">{formatCompact(epoch.totalTransactions)}</td>
+                    <td className="py-2 pr-4 text-right font-mono text-[var(--success)]">{epoch.successRate.toFixed(1)}%</td>
+                    <td className="py-2 pr-4 text-right font-mono text-[var(--text-secondary)]">{epoch.avgBlockTime.toFixed(0)}ms</td>
+                    <td className="py-2 pr-4 text-right font-mono text-[var(--accent)]">{formatSOL(epoch.totalFees)}</td>
+                    <td className="py-2 text-right font-mono text-[var(--accent-tertiary)]">{formatSOL(epoch.jitoTips)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        )}
+
+        {/* Data Source */}
+        <div className="mt-4 pt-4 border-t border-[var(--border-primary)] text-[10px] text-[var(--text-tertiary)] flex items-center justify-between">
+          <span>Data from <a href="https://solanacompass.com" target="_blank" rel="noopener noreferrer" className="text-[var(--accent-secondary)] hover:underline">Solana Compass</a></span>
+          <span>Updated: {new Date(current.updatedAt).toLocaleString()}</span>
         </div>
       </div>
     </section>
