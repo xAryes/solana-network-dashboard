@@ -2476,7 +2476,7 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
                     onMouseEnter={() => setHoveredTx(i)}
                     onMouseLeave={() => setHoveredTx(null)}
                   >
-                    {/* Compact hover tooltip - positioned at top of chart */}
+                    {/* Compact hover tooltip */}
                     {isHovered && (() => {
                       const baseFee = (tx.numSignatures || 1) * 5000;
                       const priorityFee = Math.max(0, tx.fee - baseFee);
@@ -2492,39 +2492,22 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
                             ...((!isLeftEdge && !isRightEdge) ? { left: '50%' } : {}),
                           }}
                         >
-                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl w-[200px]">
-                            {/* Header */}
-                            <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-[var(--border-primary)]">
-                              <span className="text-[11px] font-medium text-[var(--text-primary)]">TX #{i + 1}</span>
-                              <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
+                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-medium text-[var(--text-primary)]">#{i + 1}</span>
+                              <span className={`px-1 rounded text-[8px] ${
                                 tx.success ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--error)]/20 text-[var(--error)]'
-                              }`}>
-                                {tx.success ? 'OK' : 'FAIL'}
-                              </span>
+                              }`}>{tx.success ? 'OK' : 'FAIL'}</span>
+                              <span className="text-[var(--text-secondary)] capitalize">{category}</span>
                             </div>
-
-                            {/* Compact two-column layout */}
-                            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
-                              <span className="text-[var(--text-muted)]">Fee</span>
-                              <span className="font-mono text-[var(--text-primary)] text-right">{(tx.fee / 1000).toFixed(1)}k L</span>
-
-                              <span className="text-[var(--text-muted)]">Priority</span>
-                              <span className="font-mono text-[var(--accent)] text-right">{(priorityFee / 1000).toFixed(1)}k L</span>
-
-                              {tx.jitoTip > 0 && <>
-                                <span className="text-[var(--text-muted)]">Jito</span>
-                                <span className="font-mono text-[var(--accent-tertiary)] text-right">{(tx.jitoTip / 1000).toFixed(1)}k L</span>
-                              </>}
-
-                              <span className="text-[var(--text-muted)]">CU</span>
-                              <span className="font-mono text-[var(--text-secondary)] text-right">{formatCU(tx.computeUnits)}</span>
-
-                              <span className="text-[var(--text-muted)]">Type</span>
-                              <span className="text-[var(--text-secondary)] capitalize text-right">{category}</span>
+                            <div className="space-y-0.5 text-[var(--text-muted)]">
+                              <div>Fee <span className="font-mono text-[var(--text-primary)] ml-1">{tx.fee.toLocaleString()}</span> L</div>
+                              <div>Priority <span className="font-mono text-[var(--accent)] ml-1">{priorityFee.toLocaleString()}</span> L</div>
+                              {tx.jitoTip > 0 && <div>Jito <span className="font-mono text-[var(--accent-tertiary)] ml-1">{tx.jitoTip.toLocaleString()}</span> L</div>}
+                              <div>CU <span className="font-mono text-[var(--text-secondary)] ml-1">{formatCU(tx.computeUnits)}</span></div>
                             </div>
-
-                            <div className="mt-1 pt-1 border-t border-[var(--border-primary)] text-[9px] text-[var(--text-tertiary)] text-center font-mono truncate">
-                              {tx.signature.slice(0, 16)}...
+                            <div className="mt-1 pt-1 border-t border-[var(--border-primary)] text-[8px] text-[var(--text-tertiary)] font-mono">
+                              {tx.signature.slice(0, 10)}...
                             </div>
                           </div>
                         </div>
