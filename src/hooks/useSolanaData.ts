@@ -747,11 +747,12 @@ export async function fetchValidatorInfo(): Promise<Map<string, ValidatorMetadat
     for (const v of data) {
       const info: ValidatorMetadata = {
         name: v.name || v.vote_identity?.slice(0, 8) + '...',
-        logo: v.avatar_url || v.keybase_avatar_url || undefined,
-        location: v.data_center_city ? `${v.data_center_city}, ${v.data_center_country}` : v.data_center_country,
-        datacenter: v.data_center_key,
+        logo: v.image || v.avatar_url || v.keybase_avatar_url || undefined,
+        location: v.ip_city ? `${v.ip_city}, ${v.ip_country}` : v.ip_country,
+        datacenter: v.asn,
       };
 
+      // Store by both identity and vote_identity so we can look up by either
       if (v.vote_identity) {
         validatorInfoCache.set(v.vote_identity, info);
         validatorNamesCache.set(v.vote_identity, info.name);
