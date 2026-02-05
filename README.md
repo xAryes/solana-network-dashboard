@@ -1,6 +1,6 @@
 # Solana Network Dashboard
 
-Real-time Solana mainnet dashboard with block visualization, program analytics, and transaction flow. Built with React + Vite + Helius RPC.
+Real-time Solana mainnet dashboard with block visualization, program analytics, and transaction flow. Built with React + Vite + Alchemy/Helius RPC.
 
 **Live Demo**: [solana-network-dashboard.vercel.app](https://solana-network-dashboard.vercel.app/)
 
@@ -59,37 +59,44 @@ The dashboard includes detailed CU cost information for various Solana operation
 
 ## Data Sources
 
-All data is fetched from **Solana mainnet** via the **free tier** of [Helius RPC](https://helius.dev/):
+All data is fetched from **Solana mainnet** using a dual-provider setup for reliability:
 
-| RPC Method | Data |
-|------------|------|
+| Provider | Role | Link |
+|----------|------|------|
+| **Alchemy** | Primary RPC | [alchemy.com](https://alchemy.com) |
+| **Helius** | Fallback RPC | [helius.dev](https://helius.dev) |
+
+### RPC Methods Used
+
+| Method | Data |
+|--------|------|
 | `getSlot()` | Current slot number |
 | `getBlockHeight()` | Current block height |
 | `getEpochInfo()` | Epoch progress, slots remaining |
 | `getRecentPerformanceSamples()` | TPS calculation |
-| `getBlock()` | Block details, transactions, program IDs, compute units |
+| `getBlock()` | Block details, transactions, programs, fees, CU |
 | `getSupply()` | Total, circulating, non-circulating SOL |
-| `getVoteAccounts()` | Active/delinquent validators, stake distribution |
+| `getVoteAccounts()` | Active/delinquent validators, stake |
 | `getInflationRate()` | Current inflation rate, epoch rewards |
 | `getLeaderSchedule()` | Upcoming block producers |
 | `getBlockProduction()` | Leader slots, blocks produced |
-| `getRecentPrioritizationFees()` | Priority fee percentiles (when available) |
 
-The free Helius tier has rate limits (~10 RPS), so the dashboard uses 15-second refresh intervals to stay within limits.
+The dashboard uses 15-second refresh intervals to stay within free tier rate limits.
 
 ## Setup
 
-1. Get your API key at [helius.dev](https://helius.dev)
+1. Get API keys from [Alchemy](https://alchemy.com) and/or [Helius](https://helius.dev)
 2. Edit `src/hooks/useSolanaData.ts`:
 
 ```typescript
-const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY';
+const ALCHEMY_RPC = 'https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY';
+const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_KEY';
 ```
 
 3. Run the dashboard:
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 ## Transaction Categories
@@ -109,9 +116,9 @@ npm run dev
 
 - **Frontend**: React 19 + TypeScript
 - **Styling**: Tailwind CSS 4
-- **Build**: Vite 7
+- **Build**: Vite 7 + Bun
 - **Solana**: @solana/web3.js
-- **RPC**: Helius
+- **RPC**: Alchemy (primary) + Helius (fallback)
 
 ## Deployment
 
@@ -125,7 +132,7 @@ npm run dev
 
 1. Push to GitHub
 2. Import at [netlify.com](https://netlify.com)
-3. Build command: `npm run build`, Publish: `dist`
+3. Build command: `bun run build`, Publish: `dist`
 
 ## Detected Programs
 
@@ -145,6 +152,7 @@ npm run dev
 
 ## Resources
 
+- [Alchemy Solana Docs](https://docs.alchemy.com/reference/solana-api-quickstart)
 - [Helius Docs](https://docs.helius.dev/)
 - [Solscan](https://solscan.io)
 - [Solana Docs](https://solana.com/docs)
