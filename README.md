@@ -1,47 +1,86 @@
 # Solana Network Dashboard
 
-A real-time Solana mainnet dashboard displaying network statistics, block composition, program analytics, and transaction flow visualization.
+Real-time Solana mainnet dashboard with block visualization, program analytics, and transaction flow. Built with React + Vite + Helius RPC.
+
+**Live Demo**: [solana-network-dashboard.vercel.app](https://solana-network-dashboard.vercel.app/)
 
 ## Features
 
-### Currently Working ✅
-
-- **Network Overview**: Real-time slot, block height, TPS, slot time, epoch progress
+### Network Monitoring
+- **Network Overview**: Real-time slot, block height, TPS, slot time, epoch progress, total transaction count
+- **Network Health Dashboard**: Visual health gauges for TPS, slot time, skip rate, and success rate
 - **Epoch Progress**: Visual progress bar with slot counts and time remaining
-- **Validators & Stake**: Active/delinquent validator counts, total stake
-- **Supply Info**: Total, circulating, and non-circulating supply
-- **Block Performance**: Average TX/block, CU usage, success rates from recent blocks
+
+### Validators & Geography
+- **Validators & Stake**: Active/delinquent validator counts, total stake, leader schedule
+- **Global Validator Map**: Interactive world map showing validator geographic distribution
+- **Version Distribution**: Software version breakdown across validators
+- **Top Validators**: Ranked list with stake and performance metrics
+
+### Block Analytics
+- **Block Performance**: Average TX/block, CU usage, success rates
 - **CU Distribution Analysis**: Transaction categorization by compute unit usage (Micro, Light, Medium, Heavy, Compute)
-- **Block Visualizer**: Visual composition of blocks showing transaction types
+- **Block Visualizer**: Visual composition of blocks showing transaction types by category
+- **Block Deep Dive**: Detailed block explorer with position breakdown
+
+### Transaction Analysis
 - **Program Detection**: Identifies 40+ known Solana programs (Jupiter, Raydium, Orca, Pyth, etc.)
-- **Transaction Stream**: Clickable transaction grid with color-coded categories
+- **Live Transaction Stream**: Real-time WebSocket feed with color-coded categories
+- **Failed Transactions Analysis**: Error categorization and failure patterns
 - **Recent Blocks Table**: Clickable slots with TX count, CU %, success rate
-- **Recent Transactions**: Transaction signatures with CU, fees, status
-- **Network Limits Reference**: Block CU limit (60M), TX limits, slot time targets
 
-### Data Sources
+### Reference Data
+- **Supply & Inflation**: Total, circulating supply, inflation rate, epoch rewards
+- **Priority Fees**: Current network fee percentiles (when available)
+- **Network Limits Reference**: Comprehensive CU costs for 40+ operations, SIMD upgrade documentation
 
-All data is fetched from **Solana mainnet** via [Helius RPC](https://helius.dev/):
-- `getSlot()` - Current slot
-- `getEpochInfo()` - Epoch progress
-- `getRecentPerformanceSamples()` - TPS calculation
-- `getBlock()` - Block details with transactions and program IDs
-- `getSupply()` - SOL supply info
-- `getVoteAccounts()` - Validator data
+## Network Limits & Compute Units
 
----
+The dashboard includes detailed CU cost information for various Solana operations:
 
-## 🔑 Configuration - Use Your Own Helius API Key
+### Protocol Limits (Post-SIMD Upgrades)
+| Limit | Value |
+|-------|-------|
+| Block CU Limit | 60M |
+| TX Max CU | 1.4M |
+| TX Default CU | 200k |
+| Per-Account Write Lock (SIMD-83) | 12M CU/block |
+| Target Slot Time | 400ms |
 
-This dashboard is designed to work with any Helius plan. With higher-tier plans, you unlock additional features!
+### CU Costs by Operation Type
+- **Basic**: SOL Transfer (~300-450), SPL Token Transfer (~2k-4.5k)
+- **DeFi/DEX**: Jupiter Swap (~80k-400k), Raydium (~50k-150k), Orca (~60k-120k)
+- **Lending**: Marginfi (~50k-100k), Kamino (~80k-120k), Drift (~200k-800k)
+- **Staking**: Delegate Stake (~3k-5k), Marinade (~30k-60k), Jito (~40k-80k)
+- **NFT**: Mint (~50k-150k), cNFT Mint (~20k-40k), Marketplace Trade (~100k-200k)
+- **Infrastructure**: Pyth Update (~5k-15k), Vote TX (~2k-3k)
 
-### Quick Setup
+## Data Sources
+
+All data is fetched from **Solana mainnet** via the **free tier** of [Helius RPC](https://helius.dev/):
+
+| RPC Method | Data |
+|------------|------|
+| `getSlot()` | Current slot number |
+| `getBlockHeight()` | Current block height |
+| `getEpochInfo()` | Epoch progress, slots remaining |
+| `getRecentPerformanceSamples()` | TPS calculation |
+| `getBlock()` | Block details, transactions, program IDs, compute units |
+| `getSupply()` | Total, circulating, non-circulating SOL |
+| `getVoteAccounts()` | Active/delinquent validators, stake distribution |
+| `getInflationRate()` | Current inflation rate, epoch rewards |
+| `getLeaderSchedule()` | Upcoming block producers |
+| `getBlockProduction()` | Leader slots, blocks produced |
+| `getRecentPrioritizationFees()` | Priority fee percentiles (when available) |
+
+The free Helius tier has rate limits (~10 RPS), so the dashboard uses 15-second refresh intervals to stay within limits.
+
+## Setup
 
 1. Get your API key at [helius.dev](https://helius.dev)
 2. Edit `src/hooks/useSolanaData.ts`:
 
 ```typescript
-// Replace with your Helius API key
 const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY';
 ```
 
@@ -51,121 +90,42 @@ npm install
 npm run dev
 ```
 
-### Helius Plan Features
+## Transaction Categories
 
-| Feature | Free | Developer | Business | Professional |
-|---------|------|-----------|----------|--------------|
-| Basic RPC (blocks, slots, supply) | ✅ | ✅ | ✅ | ✅ |
-| Transaction parsing | ✅ | ✅ | ✅ | ✅ |
-| Rate limits | 10 RPS | 50 RPS | 200 RPS | 500+ RPS |
-| `getRecentPrioritizationFees` | ❌ | ✅ | ✅ | ✅ |
-| Priority Fee API | ❌ | ✅ | ✅ | ✅ |
-| Enhanced Transaction API | ❌ | ❌ | ✅ | ✅ |
-| DAS (Digital Asset Standard) | ❌ | ✅ | ✅ | ✅ |
-| Webhooks | ❌ | ✅ | ✅ | ✅ |
-| WebSocket subscriptions | ❌ | ❌ | ✅ | ✅ |
-
-### Unlockable Features (with Higher Plans)
-
-The dashboard has placeholder sections ready to display data when you have access:
-
-#### With Developer+ Plan:
-- **Priority Fees**: Real-time fee percentiles (min, median, p75, p90, max)
-- **Recommended Fee**: Suggested priority fee for fast inclusion
-
-#### With Business+ Plan:
-- **WebSocket Updates**: Real-time streaming instead of polling
-- **Enhanced Parsing**: Richer transaction metadata
-
-#### Future Integrations (PRs Welcome!):
-- **Jito Bundle Data**: MEV tips, bundle success rates
-- **Historical Charts**: TPS, fees, success rates over time
-- **Account Explorer**: View account history, token balances
-
----
-
-## 🎨 Color Legend
-
-### Dashboard Theme Colors
-
-| Color | Hex | Usage |
-|-------|-----|-------|
-| 🟣 Purple | `#a78bfa` | Key metrics (slot, supply, epoch) |
-| 🟢 Green | `#34d399` | Health indicators (TPS, success rate) |
-| 🔵 Blue | `#38bdf8` | Interactive links (Solscan) |
-| 🟡 Yellow | `#fbbf24` | Warnings (high CU, low success) |
-| 🔴 Red | `#f87171` | Errors (failed transactions) |
-
-### Block Visualizer - Transaction Categories
-
-| Color | Category | Description | Example Programs |
-|-------|----------|-------------|------------------|
-| 🟢 Green | DEX | Swaps & AMM | Jupiter, Raydium, Orca, Meteora |
-| 🟠 Orange | Perps | Derivatives | Drift, Zeta |
-| 🩵 Teal | Lending | Borrow/Lend | Solend, Marginfi, Kamino |
-| 🔵 Blue | Staking | Liquid Staking | Marinade, Jito, Stake Pool |
-| 💜 Purple | Oracle | Price Feeds | Pyth, Switchboard |
-| 🩷 Pink | NFT | NFT Markets | Metaplex, Tensor, Magic Eden |
-| ⬜ Gray | Core | System ops | System, Token, ATA |
-| ⬛ Dark Gray | Vote | Consensus | Vote Program |
-| 🔘 Slate | Unknown | Unidentified | Other programs |
-
-### CU Distribution Categories
-
-| Category | CU Range | Typical Operations |
-|----------|----------|-------------------|
-| Micro | < 5k | SOL transfers, memos |
-| Light | 5k - 50k | Token transfers, basic ops |
-| Medium | 50k - 200k | Simple swaps, staking |
-| Heavy | 200k - 500k | Complex DeFi, multi-hop |
-| Compute | > 500k | Liquidations, heavy compute |
-
----
-
-## Current Limitations ⚠️
-
-### With Basic/Free Helius Plan
-
-1. **No Priority Fee Data**: `getRecentPrioritizationFees()` requires Developer+ plan
-2. **Polling Only**: No WebSocket subscriptions (requires Business+ plan)
-3. **Rate Limits**: 10 RPS limits refresh frequency to ~2-5 seconds
-4. **No Historical Data**: Only recent blocks, no archival access
-
-### Requires Custom Infrastructure
-
-| Feature | What's Needed |
-|---------|---------------|
-| Hot Accounts (Contention) | Validator scheduler access or Jito API |
-| Skip Rate by Validator | Leader schedule + production logs |
-| Vote Latency | Vote transaction analysis pipeline |
-| Historical Charts | Time-series database + indexer |
-
----
+| Color | Category | Example Programs |
+|-------|----------|------------------|
+| Green | DEX | Jupiter, Raydium, Orca, Meteora |
+| Orange | Perps | Drift, Zeta |
+| Teal | Lending | Solend, Marginfi, Kamino |
+| Blue | Staking | Marinade, Jito, Stake Pool |
+| Purple | Oracle | Pyth, Switchboard |
+| Pink | NFT | Metaplex, Tensor, Magic Eden |
+| Gray | Core | System, Token, ATA |
+| Dark Gray | Vote | Vote Program |
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TypeScript
-- **Styling**: Tailwind CSS + CSS Variables
-- **Build**: Vite
+- **Frontend**: React 19 + TypeScript
+- **Styling**: Tailwind CSS 4
+- **Build**: Vite 7
 - **Solana**: @solana/web3.js
-- **RPC**: Helius (configurable)
+- **RPC**: Helius
 
-## Getting Started
+## Deployment
 
-```bash
-# Install dependencies
-npm install
+### Vercel (Recommended)
 
-# Start development server
-npm run dev
+1. Push to GitHub
+2. Import at [vercel.com](https://vercel.com)
+3. Deploy - Vite is auto-detected
 
-# Build for production
-npm run build
-```
+### Netlify
+
+1. Push to GitHub
+2. Import at [netlify.com](https://netlify.com)
+3. Build command: `npm run build`, Publish: `dist`
 
 ## Detected Programs
-
-The dashboard recognizes 40+ Solana programs:
 
 **DEX/AMM**: Jupiter v4/v6, Raydium AMM/CLMM, Orca Whirlpool, Meteora DLMM, Openbook, Phoenix
 
@@ -175,39 +135,17 @@ The dashboard recognizes 40+ Solana programs:
 
 **Staking**: Marinade, Jito Staking, Stake Pool
 
-**NFT**: Metaplex, Tensor Swap, Tensor cNFT, Magic Eden v2
+**NFT**: Metaplex, Tensor, Magic Eden v2
 
 **Perps**: Drift, Zeta
 
 **Core**: System, Token, Token-2022, ATA, Compute Budget, Vote, Memo
 
-To add more programs, edit `KNOWN_PROGRAMS` in `src/hooks/useSolanaData.ts`.
-
-## Network Constants
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| Block CU Limit | 60M | Max compute units per block |
-| TX Default CU | 200k | Default CU limit per transaction |
-| TX Max CU | 1.4M | Maximum requestable CU per transaction |
-| Target Slot Time | 400ms | Expected slot production time |
-| Slots per Epoch | 432,000 | ~2-3 days |
-
 ## Resources
 
-- [Helius Docs](https://docs.helius.dev/) - RPC & API documentation
-- [Helius Priority Fee API](https://docs.helius.dev/solana-rpc-nodes/alpha-priority-fee-api) - Fee recommendations
-- [Solscan](https://solscan.io) - Transaction explorer
-- [Solana Docs](https://solana.com/docs) - Network documentation
-
-## Contributing
-
-PRs welcome! Some ideas:
-- Add more program detections
-- Implement priority fee display (requires API key with access)
-- Add WebSocket support for real-time updates
-- Historical data charts
-- Account/transaction search
+- [Helius Docs](https://docs.helius.dev/)
+- [Solscan](https://solscan.io)
+- [Solana Docs](https://solana.com/docs)
 
 ## License
 

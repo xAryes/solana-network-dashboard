@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "Real-time Solana mainnet dashboard with block visualization, program analytics, and transaction flow. Built with React + Vite + Helius RPC",
   "homepage": "https://xaryes.github.io/solana-dashboard",
   "scripts": {
     "dev": "vite",
@@ -14,17 +15,22 @@
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
     "@tailwindcss/vite": "^4.1.18",
+    "d3-geo": "^3.1.1",
     "framer-motion": "^12.31.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.18"
+    "react-simple-maps": "^3.0.0",
+    "tailwindcss": "^4.1.18",
+    "topojson-client": "^3.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/d3-geo": "^3.1.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
+    "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^5.1.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
