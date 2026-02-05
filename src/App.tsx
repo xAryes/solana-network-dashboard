@@ -2384,7 +2384,7 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
         </div>
 
       {/* Transaction Visualization */}
-      <div className="card p-6 overflow-hidden">
+      <div className="card p-6 overflow-visible">
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Transaction Visualization</div>
@@ -2407,7 +2407,7 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
         </div>
 
         {/* Chart area */}
-        <div className="relative bg-[var(--bg-secondary)] rounded-xl p-4">
+        <div className="relative bg-[var(--bg-secondary)] rounded-xl p-4 overflow-visible">
           {/* Y-axis */}
           <div className="absolute left-4 top-4 bottom-12 w-12 flex flex-col justify-between text-[10px] font-mono text-[var(--text-muted)]">
             <span>{formatCU(maxCU)}</span>
@@ -2429,14 +2429,14 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
           </div>
 
           {/* Bar chart - full width visualization */}
-          <div className="ml-16 mr-4 h-64 relative overflow-hidden">
+          <div className="ml-16 mr-4 h-80 relative overflow-visible">
             {/* Section dividers - subtle */}
             <div className="absolute top-0 bottom-0 left-1/3 w-px bg-[var(--border-secondary)] z-10" />
             <div className="absolute top-0 bottom-0 left-2/3 w-px bg-[var(--border-secondary)] z-10" />
 
             {/* Bars container - using CSS grid for even distribution */}
             <div
-              className="absolute inset-0 overflow-hidden"
+              className="absolute inset-0 overflow-x-clip overflow-y-visible"
               style={{
                 display: 'grid',
                 gridTemplateColumns: `repeat(${Math.min(txsForChart.length, 2000)}, 1fr)`,
@@ -2476,90 +2476,55 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
                     onMouseEnter={() => setHoveredTx(i)}
                     onMouseLeave={() => setHoveredTx(null)}
                   >
-                    {/* Enhanced hover tooltip - detailed like Solana Beach */}
+                    {/* Compact hover tooltip - positioned at top of chart */}
                     {isHovered && (() => {
                       const baseFee = (tx.numSignatures || 1) * 5000;
                       const priorityFee = Math.max(0, tx.fee - baseFee);
-                      const cuPrice = tx.computeUnits > 0 ? Math.round((priorityFee / tx.computeUnits) * 1e6) : 0; // microlamports per CU
                       return (
                         <div
-                          className={`absolute bottom-full mb-2 z-30 pointer-events-none ${
-                            isLeftEdge ? 'left-0' : isRightEdge ? 'right-0' : 'left-1/2 -translate-x-1/2'
-                          }`}
+                          className={`absolute z-50 pointer-events-none`}
+                          style={{
+                            bottom: '100%',
+                            marginBottom: '4px',
+                            left: isLeftEdge ? '0' : undefined,
+                            right: isRightEdge ? '0' : undefined,
+                            transform: (!isLeftEdge && !isRightEdge) ? 'translateX(-50%)' : undefined,
+                            ...((!isLeftEdge && !isRightEdge) ? { left: '50%' } : {}),
+                          }}
                         >
-                          <div className="bg-[var(--bg-primary)] border border-[var(--border-secondary)] rounded-xl px-4 py-3 shadow-2xl min-w-[280px] max-w-[320px]">
+                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl w-[200px]">
                             {/* Header */}
-                            <div className="flex items-center justify-between mb-3 pb-2 border-b border-[var(--border-primary)]">
-                              <span className="text-sm font-medium text-[var(--text-primary)]">Transaction</span>
-                              <span className="font-mono text-sm text-[var(--text-secondary)]">#{i + 1}</span>
+                            <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-[var(--border-primary)]">
+                              <span className="text-[11px] font-medium text-[var(--text-primary)]">TX #{i + 1}</span>
+                              <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
+                                tx.success ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--error)]/20 text-[var(--error)]'
+                              }`}>
+                                {tx.success ? 'OK' : 'FAIL'}
+                              </span>
                             </div>
 
-                            {/* Main info grid */}
-                            <div className="space-y-2 text-xs">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Signature:</span>
-                                <span className="font-mono text-[var(--text-secondary)]">{tx.signature.slice(0, 12)}...{tx.signature.slice(-12)}</span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Fee Payer:</span>
-                                <span className="font-mono text-[var(--text-secondary)]">{tx.feePayer ? `${tx.feePayer.slice(0, 8)}...${tx.feePayer.slice(-8)}` : '—'}</span>
-                              </div>
+                            {/* Compact two-column layout */}
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                              <span className="text-[var(--text-muted)]">Fee</span>
+                              <span className="font-mono text-[var(--text-primary)] text-right">{(tx.fee / 1000).toFixed(1)}k L</span>
 
-                              <div className="border-t border-[var(--border-primary)] my-2 pt-2" />
+                              <span className="text-[var(--text-muted)]">Priority</span>
+                              <span className="font-mono text-[var(--accent)] text-right">{(priorityFee / 1000).toFixed(1)}k L</span>
 
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Total Fee:</span>
-                                <span className="font-mono text-[var(--text-primary)]">{tx.fee.toLocaleString()} <span className="text-[var(--text-tertiary)]">L</span></span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Base Fee:</span>
-                                <span className="font-mono text-[var(--text-secondary)]">{baseFee.toLocaleString()} <span className="text-[var(--text-tertiary)]">L</span></span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Priority Fee:</span>
-                                <span className="font-mono text-[var(--accent)]">{priorityFee.toLocaleString()} <span className="text-[var(--text-tertiary)]">L</span></span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Jito Tip:</span>
-                                <span className="font-mono text-[var(--accent-tertiary)]">{tx.jitoTip > 0 ? `${tx.jitoTip.toLocaleString()} L` : '—'}</span>
-                              </div>
+                              {tx.jitoTip > 0 && <>
+                                <span className="text-[var(--text-muted)]">Jito</span>
+                                <span className="font-mono text-[var(--accent-tertiary)] text-right">{(tx.jitoTip / 1000).toFixed(1)}k L</span>
+                              </>}
 
-                              <div className="border-t border-[var(--border-primary)] my-2 pt-2" />
+                              <span className="text-[var(--text-muted)]">CU</span>
+                              <span className="font-mono text-[var(--text-secondary)] text-right">{formatCU(tx.computeUnits)}</span>
 
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">CU Used:</span>
-                                <span className="font-mono text-[var(--text-primary)]">{tx.computeUnits.toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">CU Price:</span>
-                                <span className="font-mono text-[var(--text-secondary)]">{cuPrice.toLocaleString()} <span className="text-[var(--text-tertiary)]">μL</span></span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">SOL Movement:</span>
-                                <span className={`font-mono ${tx.solMovement > 0 ? 'text-[var(--success)]' : tx.solMovement < 0 ? 'text-[var(--error)]' : 'text-[var(--text-tertiary)]'}`}>
-                                  {tx.solMovement !== 0 ? `${tx.solMovement > 0 ? '+' : ''}${(tx.solMovement / 1e9).toFixed(6)}` : '0'} <span className="text-[var(--text-tertiary)]">SOL</span>
-                                </span>
-                              </div>
-
-                              <div className="border-t border-[var(--border-primary)] my-2 pt-2" />
-
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Type:</span>
-                                <span className="text-[var(--text-secondary)] capitalize">{category}</span>
-                              </div>
-                              <div className="flex justify-between items-center">
-                                <span className="text-[var(--text-muted)]">Status:</span>
-                                <span className={`font-medium px-2 py-0.5 rounded text-[10px] ${
-                                  tx.success ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--error)]/20 text-[var(--error)]'
-                                }`}>
-                                  {tx.success ? 'SUCCESS' : 'FAILED'}
-                                </span>
-                              </div>
+                              <span className="text-[var(--text-muted)]">Type</span>
+                              <span className="text-[var(--text-secondary)] capitalize text-right">{category}</span>
                             </div>
 
-                            {/* Footer */}
-                            <div className="mt-3 pt-2 border-t border-[var(--border-primary)] text-[10px] text-[var(--text-muted)] text-center">
-                              Click to view on Solscan
+                            <div className="mt-1 pt-1 border-t border-[var(--border-primary)] text-[9px] text-[var(--text-tertiary)] text-center font-mono truncate">
+                              {tx.signature.slice(0, 16)}...
                             </div>
                           </div>
                         </div>
