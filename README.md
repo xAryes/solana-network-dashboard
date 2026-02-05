@@ -11,17 +11,19 @@ Real-time Solana mainnet dashboard with block visualization, program analytics, 
 - **Network Health Dashboard**: Visual health gauges for TPS, slot time, skip rate, and success rate
 - **Epoch Progress**: Visual progress bar with slot counts and time remaining
 
-### Validators & Geography
-- **Validators & Stake**: Active/delinquent validator counts, total stake, leader schedule
-- **Global Validator Map**: Interactive world map showing validator geographic distribution
+### Validators & Leaders
+- **Validators & Stake**: Active/delinquent validator counts, total stake
+- **Leader Schedule**: Upcoming block producers with grouped slot ranges
 - **Version Distribution**: Software version breakdown across validators
 - **Top Validators**: Ranked list with stake and performance metrics
 
-### Block Analytics
-- **Block Performance**: Average TX/block, CU usage, success rates
-- **CU Distribution Analysis**: Transaction categorization by compute unit usage (Micro, Light, Medium, Heavy, Compute)
-- **Block Visualizer**: Visual composition of blocks showing transaction types by category
-- **Block Deep Dive**: Detailed block explorer with position breakdown
+### Block Explorer (Solana Beach-style)
+- **Block Queue**: Live block pipeline with pause/resume and slot search
+- **4-Panel Analytics**: Block Info, Transactions, Fees, Compute Units
+- **Fee Breakdown**: Total fees, Base fees (5000L/sig), Priority fees, Jito Tips
+- **Jito Tips Detection**: Tracks transfers to Jito's 8 tip accounts
+- **Transaction Visualization**: Full-width bar chart showing all transactions in block order
+- **Smart Tooltips**: Detailed tx info (signature, fee payer, fees, CU, SOL movement) with edge-aware positioning
 
 ### Transaction Analysis
 - **Program Detection**: Identifies 40+ known Solana programs (Jupiter, Raydium, Orca, Pyth, etc.)
