@@ -1,31 +1,32 @@
 @import "tailwindcss";
 
 :root {
-  /* Monochrome Dark Theme */
-  --bg-primary: #09090b;
-  --bg-secondary: #0f0f12;
-  --bg-tertiary: #18181b;
-  --bg-card: #0c0c0e;
-  --bg-hover: #151517;
+  /* High Contrast Dark Theme */
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-card: #0a0a0a;
+  --bg-hover: #1a1a1a;
 
-  --border-primary: #1f1f23;
-  --border-secondary: #2a2a2f;
-  --border-accent: #3a3a40;
+  --border-primary: #262626;
+  --border-secondary: #333333;
+  --border-accent: #444444;
 
-  --text-primary: #f4f4f5;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #71717a;
-  --text-muted: #52525b;
+  /* Increased text contrast */
+  --text-primary: #ffffff;
+  --text-secondary: #d4d4d4;
+  --text-tertiary: #a3a3a3;
+  --text-muted: #737373;
 
-  /* Accent colors */
-  --accent: #a78bfa;      /* Purple - key metrics */
-  --accent-secondary: #38bdf8; /* Blue - links/interactive */
-  --accent-tertiary: #34d399; /* Green - positive/health */
+  /* Brighter accent colors for better visibility */
+  --accent: #c4b5fd;         /* Brighter purple - key metrics */
+  --accent-secondary: #60cdff; /* Brighter blue - links/interactive */
+  --accent-tertiary: #4ade80;  /* Brighter green - positive/health */
 
-  /* Status colors */
-  --success: #4ade80;
-  --error: #f87171;
-  --warning: #fbbf24;
+  /* High contrast status colors */
+  --success: #22c55e;
+  --error: #ef4444;
+  --warning: #f59e0b;
 }
 
 * {
@@ -59,12 +60,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-primary);
+  background: var(--border-secondary);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-secondary);
+  background: var(--border-accent);
 }
 
 ::selection {
@@ -72,7 +73,7 @@ body {
   color: var(--bg-primary);
 }
 
-/* Card styles */
+/* Card styles - slightly brighter border for contrast */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-primary);
@@ -105,6 +106,7 @@ body {
 
 .status-dot.live {
   background: var(--success);
+  box-shadow: 0 0 8px var(--success);
 }
 
 /* Links */
@@ -134,4 +136,334 @@ button {
 /* Section spacing */
 section {
   scroll-margin-top: 60px;
+}
+
+/* Responsive utilities */
+@media (max-width: 640px) {
+  body {
+    font-size: 13px;
+  }
+
+  .card {
+    border-radius: 12px;
+  }
+}
+
+/* Better table responsiveness */
+.responsive-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.responsive-table::-webkit-scrollbar {
+  height: 4px;
+}
+
+/* Smooth transitions for interactive elements */
+.card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--border-secondary);
+}
+
+/* Enhanced card with glow effect */
+.card-glow {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.card-glow:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(196, 181, 253, 0.1);
+}
+
+/* Stat card animations */
+.stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Pulse animation for live indicators */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.pulse-ring::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: inherit;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Skeleton loading animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-tertiary) 25%,
+    var(--bg-secondary) 50%,
+    var(--bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* Mobile bottom nav safe area */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .mobile-nav-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(10, 10, 10, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Table row hover with gradient */
+.table-row-hover {
+  transition: background 0.15s ease;
+}
+
+.table-row-hover:hover {
+  background: linear-gradient(90deg, var(--bg-hover) 0%, transparent 100%);
+}
+
+/* Progress bar animation */
+@keyframes progress-fill {
+  from {
+    width: 0%;
+  }
+}
+
+.progress-animated {
+  animation: progress-fill 0.5s ease-out;
+}
+
+/* Responsive grid adjustments */
+@media (max-width: 768px) {
+  .grid-responsive {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .grid-responsive {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Bottom padding for mobile nav */
+@media (max-width: 1024px) {
+  main {
+    padding-bottom: 100px !important;
+  }
+}
+
+/* Subtle grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(var(--border-primary) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-primary) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-position: -1px -1px;
+}
+
+/* Animated gradient border */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.border-gradient {
+  position: relative;
+  background: var(--bg-card);
+  border-radius: 12px;
+}
+
+.border-gradient::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-secondary), var(--accent-tertiary), var(--accent));
+  background-size: 300% 100%;
+  animation: gradient-shift 8s ease infinite;
+  z-index: -1;
+  opacity: 0.5;
+}
+
+/* Network activity pulse */
+@keyframes network-pulse {
+  0% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.02); }
+  100% { opacity: 0.3; transform: scale(1); }
+}
+
+.network-pulse {
+  animation: network-pulse 2s ease-in-out infinite;
+}
+
+/* Data update flash */
+@keyframes data-flash {
+  0% { background-color: var(--accent); opacity: 0.3; }
+  100% { background-color: transparent; opacity: 0; }
+}
+
+.data-updated::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  animation: data-flash 0.5s ease-out;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Floating animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+.float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Staggered animation delay */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+.stagger-5 { animation-delay: 0.5s; }
+
+/* Smooth number transitions */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-primary);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Tooltip styles */
+.tooltip {
+  position: relative;
+}
+
+.tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 100;
+}
+
+.tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Slide in animation for new items */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Scale in animation */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.2s ease-out;
 }
