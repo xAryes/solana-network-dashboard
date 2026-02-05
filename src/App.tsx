@@ -429,9 +429,6 @@ function App() {
         {/* In-House Analytics */}
         <AnalyticsSection blocks={blocks} transactions={transactions} />
 
-        {/* Leader Schedule */}
-        <LeaderScheduleSection schedule={leaderSchedule} getValidatorName={getValidatorName} />
-
         {/* Live Transaction Stream */}
         <LiveTransactionStream transactions={liveTxs} isConnected={wsConnected} />
 
@@ -2542,106 +2539,6 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
             <span className="text-[var(--text-tertiary)]">Failed</span>
           </div>
         </div>
-      </div>
-    </section>
-  );
-}
-
-// Leader Schedule Section
-function LeaderScheduleSection({ schedule, getValidatorName }: { schedule: ReturnType<typeof useLeaderSchedule>['schedule']; getValidatorName: (pubkey: string) => string | null }) {
-  if (!schedule || schedule.upcomingLeaders.length === 0) return null;
-
-  // Group consecutive slots by the same leader
-  const groupedLeaders: { leader: string; name: string | null; slots: number[]; startSlot: number; endSlot: number }[] = [];
-  let currentGroup: typeof groupedLeaders[0] | null = null;
-
-  for (const entry of schedule.upcomingLeaders) {
-    if (currentGroup && currentGroup.leader === entry.leader && entry.slot === currentGroup.endSlot + 1) {
-      currentGroup.slots.push(entry.slot);
-      currentGroup.endSlot = entry.slot;
-    } else {
-      if (currentGroup) groupedLeaders.push(currentGroup);
-      currentGroup = {
-        leader: entry.leader,
-        name: getValidatorName(entry.leader),
-        slots: [entry.slot],
-        startSlot: entry.slot,
-        endSlot: entry.slot,
-      };
-    }
-  }
-  if (currentGroup) groupedLeaders.push(currentGroup);
-
-  return (
-    <section id="leaders" className="mb-10">
-      <SectionHeader title="Leader Schedule" subtitle="Upcoming block producers" />
-      <div className="card overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[var(--border-primary)] text-left text-xs text-[var(--text-muted)] uppercase">
-              <th className="px-4 py-3 font-medium w-20">Position</th>
-              <th className="px-4 py-3 font-medium">Validator</th>
-              <th className="px-4 py-3 font-medium text-right">Slots</th>
-              <th className="px-4 py-3 font-medium text-right">Range</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groupedLeaders.slice(0, 10).map((group, i) => {
-              const isNext = i === 0;
-              const relativeStart = group.startSlot - schedule.currentSlot;
-              return (
-                <tr
-                  key={group.startSlot}
-                  className={`border-b border-[var(--border-primary)] last:border-0 ${isNext ? 'bg-[var(--accent-tertiary)]/10' : 'hover:bg-[var(--bg-hover)]'}`}
-                >
-                  <td className="px-4 py-2.5">
-                    <span className={`text-xs font-medium ${isNext ? 'text-[var(--accent-tertiary)]' : 'text-[var(--text-muted)]'}`}>
-                      {isNext ? 'NEXT' : `+${relativeStart}`}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex flex-col">
-                      {group.name ? (
-                        <>
-                          <a
-                            href={getSolscanUrl('account', group.leader)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`text-sm hover:underline truncate ${isNext ? 'text-[var(--accent-tertiary)] font-medium' : 'text-[var(--text-secondary)]'}`}
-                          >
-                            {group.name}
-                          </a>
-                          <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                            {group.leader.slice(0, 8)}...{group.leader.slice(-4)}
-                          </span>
-                        </>
-                      ) : (
-                        <a
-                          href={getSolscanUrl('account', group.leader)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm font-mono text-[var(--accent-secondary)] hover:underline truncate"
-                        >
-                          {group.leader.slice(0, 8)}...{group.leader.slice(-4)}
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className={`text-sm font-mono ${group.slots.length > 2 ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)]'}`}>
-                      {group.slots.length} {group.slots.length === 1 ? 'slot' : 'slots'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs text-[var(--text-muted)]">
-                    {group.slots.length === 1
-                      ? group.startSlot.toLocaleString()
-                      : `${group.startSlot.toLocaleString()} - ${group.endSlot.toLocaleString()}`}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
     </section>
   );
