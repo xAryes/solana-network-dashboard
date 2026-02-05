@@ -383,6 +383,10 @@ export function useRecentBlocks(count: number = 10) {
       if (validBlocks.length > 0) {
         setBlocks(validBlocks);
         setError(null);
+        // Store blocks for historical analysis (async, don't await)
+        for (const block of validBlocks) {
+          storeBlockData(block);
+        }
       }
       setIsLoading(false);
     } catch (err) {
@@ -1335,4 +1339,235 @@ export function useValidatorLocations() {
   }, []);
 
   return { locations, isLoading };
+}
+
+// ============================================
+// HISTORICAL DATA STORAGE (IndexedDB)
+// ============================================
+
+export interface HistoricalBlockData {
+  slot: number;
+  timestamp: number;
+  txCount: number;
+  successCount: number;
+  failedCount: number;
+  totalFees: number;
+  priorityFees: number;
+  jitoTips: number;
+  totalCU: number;
+  cuPercent: number;
+  categories: Record<string, number>; // tx count by category
+}
+
+export interface HistoricalStats {
+  blocks: number;
+  transactions: number;
+  successRate: number;
+  avgTxPerBlock: number;
+  totalFees: number;
+  avgFeePerTx: number;
+  priorityFees: number;
+  jitoTips: number;
+  avgCuPercent: number;
+  categoryBreakdown: Record<string, number>;
+  tpsHistory: { timestamp: number; tps: number }[];
+  feeHistory: { timestamp: number; avgFee: number }[];
+}
+
+const DB_NAME = 'solana-dashboard-history';
+const DB_VERSION = 1;
+const STORE_NAME = 'blocks';
+
+let dbInstance: IDBDatabase | null = null;
+
+async function openDB(): Promise<IDBDatabase> {
+  if (dbInstance) return dbInstance;
+
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      resolve(request.result);
+    };
+
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'slot' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+  });
+}
+
+export async function storeBlockData(block: SlotData): Promise<void> {
+  if (!block.transactions || block.transactions.length === 0) return;
+
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+
+    // Calculate aggregates
+    const successCount = block.transactions.filter(t => t.success).length;
+    const baseFees = block.transactions.reduce((sum, t) => sum + (t.numSignatures || 1) * 5000, 0);
+    const totalFees = block.transactions.reduce((sum, t) => sum + t.fee, 0);
+    const priorityFees = totalFees - baseFees;
+    const jitoTips = block.transactions.reduce((sum, t) => sum + t.jitoTip, 0);
+    const totalCU = block.transactions.reduce((sum, t) => sum + t.computeUnits, 0);
+
+    // Count by category
+    const categories: Record<string, number> = {};
+    for (const t of block.transactions) {
+      const cat = getTxCategory(t.programs);
+      categories[cat] = (categories[cat] || 0) + 1;
+    }
+
+    const data: HistoricalBlockData = {
+      slot: block.slot,
+      timestamp: block.blockTime ? block.blockTime * 1000 : Date.now(),
+      txCount: block.transactions.length,
+      successCount,
+      failedCount: block.transactions.length - successCount,
+      totalFees,
+      priorityFees,
+      jitoTips,
+      totalCU,
+      cuPercent: (totalCU / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100,
+      categories,
+    };
+
+    store.put(data);
+
+    // Cleanup old data (keep last 48 hours)
+    const cutoff = Date.now() - (48 * 60 * 60 * 1000);
+    const index = store.index('timestamp');
+    const range = IDBKeyRange.upperBound(cutoff);
+    index.openCursor(range).onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
+    };
+  } catch (err) {
+    console.warn('Failed to store block data:', err);
+  }
+}
+
+export async function getHistoricalStats(hoursBack: number = 24): Promise<HistoricalStats | null> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const index = store.index('timestamp');
+
+    const cutoff = Date.now() - (hoursBack * 60 * 60 * 1000);
+    const range = IDBKeyRange.lowerBound(cutoff);
+
+    return new Promise((resolve) => {
+      const blocks: HistoricalBlockData[] = [];
+
+      index.openCursor(range).onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          blocks.push(cursor.value);
+          cursor.continue();
+        } else {
+          // Calculate stats
+          if (blocks.length === 0) {
+            resolve(null);
+            return;
+          }
+
+          const totalTx = blocks.reduce((s, b) => s + b.txCount, 0);
+          const successTx = blocks.reduce((s, b) => s + b.successCount, 0);
+          const totalFees = blocks.reduce((s, b) => s + b.totalFees, 0);
+          const priorityFees = blocks.reduce((s, b) => s + b.priorityFees, 0);
+          const jitoTips = blocks.reduce((s, b) => s + b.jitoTips, 0);
+          const avgCu = blocks.reduce((s, b) => s + b.cuPercent, 0) / blocks.length;
+
+          // Category breakdown
+          const categoryBreakdown: Record<string, number> = {};
+          for (const b of blocks) {
+            for (const [cat, count] of Object.entries(b.categories)) {
+              categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + count;
+            }
+          }
+
+          // TPS history (bucket by 5 minutes)
+          const tpsBuckets = new Map<number, { txs: number; blocks: number }>();
+          const feeBuckets = new Map<number, { fees: number; txs: number }>();
+          const bucketSize = 5 * 60 * 1000; // 5 minutes
+
+          for (const b of blocks) {
+            const bucket = Math.floor(b.timestamp / bucketSize) * bucketSize;
+            const tpsBucket = tpsBuckets.get(bucket) || { txs: 0, blocks: 0 };
+            tpsBucket.txs += b.txCount;
+            tpsBucket.blocks += 1;
+            tpsBuckets.set(bucket, tpsBucket);
+
+            const feeBucket = feeBuckets.get(bucket) || { fees: 0, txs: 0 };
+            feeBucket.fees += b.totalFees;
+            feeBucket.txs += b.txCount;
+            feeBuckets.set(bucket, feeBucket);
+          }
+
+          const tpsHistory = Array.from(tpsBuckets.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([timestamp, data]) => ({
+              timestamp,
+              tps: Math.round(data.txs / (data.blocks * 0.4)), // ~0.4s per block
+            }));
+
+          const feeHistory = Array.from(feeBuckets.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([timestamp, data]) => ({
+              timestamp,
+              avgFee: data.txs > 0 ? Math.round(data.fees / data.txs) : 0,
+            }));
+
+          resolve({
+            blocks: blocks.length,
+            transactions: totalTx,
+            successRate: totalTx > 0 ? (successTx / totalTx) * 100 : 0,
+            avgTxPerBlock: totalTx / blocks.length,
+            totalFees,
+            avgFeePerTx: totalTx > 0 ? totalFees / totalTx : 0,
+            priorityFees,
+            jitoTips,
+            avgCuPercent: avgCu,
+            categoryBreakdown,
+            tpsHistory,
+            feeHistory,
+          });
+        }
+      };
+    });
+  } catch (err) {
+    console.warn('Failed to get historical stats:', err);
+    return null;
+  }
+}
+
+export function useHistoricalStats(hoursBack: number = 24) {
+  const [stats, setStats] = useState<HistoricalStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      const data = await getHistoricalStats(hoursBack);
+      setStats(data);
+      setIsLoading(false);
+    };
+
+    fetchStats();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
+  }, [hoursBack]);
+
+  return { stats, isLoading };
 }

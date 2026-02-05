@@ -12,6 +12,7 @@ import {
   useLiveTransactions,
   useTopValidators,
   useValidatorNames,
+  useHistoricalStats,
   formatCU,
   formatNumber,
   getSolscanUrl,
@@ -21,7 +22,7 @@ import {
   getTxCategory,
   CATEGORY_COLORS,
 } from './hooks/useSolanaData';
-import type { SlotData, LiveTransaction, LeaderScheduleInfo, ValidatorMetadata } from './hooks/useSolanaData';
+import type { SlotData, LiveTransaction, LeaderScheduleInfo, ValidatorMetadata, HistoricalStats } from './hooks/useSolanaData';
 
 // Generate a gradient color based on pubkey for avatar fallback
 function getAvatarGradient(pubkey: string): string {
@@ -96,6 +97,7 @@ function App() {
   const { transactions: liveTxs, isConnected: wsConnected } = useLiveTransactions(30);
   const { validatorInfo: topValidators } = useTopValidators(15);
   const { getName: getValidatorName, getMetadata: getValidatorMetadata } = useValidatorNames();
+  const { stats: historicalStats } = useHistoricalStats(24);
 
   // Active section tracking for navigation
   const [activeSection, setActiveSection] = useState('overview');
@@ -428,6 +430,9 @@ function App() {
 
         {/* In-House Analytics */}
         <AnalyticsSection blocks={blocks} transactions={transactions} />
+
+        {/* Historical Stats (24h) */}
+        <HistoricalStatsSection stats={historicalStats} />
 
         {/* Live Transaction Stream */}
         <LiveTransactionStream transactions={liveTxs} isConnected={wsConnected} />
@@ -835,6 +840,161 @@ function CUDistribution({ transactions }: { transactions: TransactionInfo[] }) {
               <span className="text-[var(--text-muted)]">Liquidation</span>
               <span className="font-mono text-[var(--text-tertiary)]">~300-800k</span>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Historical Stats Section - Shows accumulated data over time
+function HistoricalStatsSection({ stats }: { stats: HistoricalStats | null }) {
+  if (!stats || stats.blocks < 10) {
+    return (
+      <section className="mb-10">
+        <SectionHeader title="Historical Stats (24h)" subtitle="Accumulating data..." />
+        <div className="card p-6">
+          <div className="text-center py-8">
+            <div className="text-4xl mb-3">📊</div>
+            <div className="text-[var(--text-secondary)] mb-2">Building Historical Database</div>
+            <div className="text-sm text-[var(--text-muted)]">
+              Data is being collected as you browse. Check back in a few minutes for charts and trends.
+            </div>
+            {stats && stats.blocks > 0 && (
+              <div className="mt-4 text-xs text-[var(--text-tertiary)]">
+                {stats.blocks} blocks collected so far...
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Format helpers
+  const formatFee = (lamports: number) => {
+    if (lamports >= 1e9) return `${(lamports / 1e9).toFixed(2)} SOL`;
+    if (lamports >= 1e6) return `${(lamports / 1e6).toFixed(1)}M L`;
+    if (lamports >= 1e3) return `${(lamports / 1e3).toFixed(1)}k L`;
+    return `${lamports.toFixed(0)} L`;
+  };
+
+  // Mini sparkline chart
+  const Sparkline = ({ data, color, height = 40 }: { data: { value: number }[]; color: string; height?: number }) => {
+    if (data.length < 2) return null;
+    const max = Math.max(...data.map(d => d.value));
+    const min = Math.min(...data.map(d => d.value));
+    const range = max - min || 1;
+    const width = 200;
+    const points = data.map((d, i) => {
+      const x = (i / (data.length - 1)) * width;
+      const y = height - ((d.value - min) / range) * (height - 4);
+      return `${x},${y}`;
+    }).join(' ');
+
+    return (
+      <svg width={width} height={height} className="overflow-visible">
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  };
+
+  return (
+    <section className="mb-10">
+      <SectionHeader title="Historical Stats (24h)" subtitle={`${stats.blocks.toLocaleString()} blocks analyzed`} />
+      <div className="card p-6">
+        {/* Key Metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Transactions</div>
+            <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{stats.transactions.toLocaleString()}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Success Rate</div>
+            <div className="text-xl font-mono font-bold text-[var(--success)]">{stats.successRate.toFixed(1)}%</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Avg TX/Block</div>
+            <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{stats.avgTxPerBlock.toFixed(0)}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Avg CU %</div>
+            <div className="text-xl font-mono font-bold text-[var(--text-secondary)]">{stats.avgCuPercent.toFixed(1)}%</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Total Fees</div>
+            <div className="text-xl font-mono font-bold text-[var(--accent)]">{formatFee(stats.totalFees)}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Jito Tips</div>
+            <div className="text-xl font-mono font-bold text-[var(--accent-tertiary)]">{formatFee(stats.jitoTips)}</div>
+          </div>
+        </div>
+
+        {/* Charts Row */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* TPS History */}
+          <div className="p-4 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">TPS Trend</div>
+            <div className="flex items-end justify-between gap-4">
+              <Sparkline
+                data={stats.tpsHistory.map(p => ({ value: p.tps }))}
+                color="var(--accent)"
+                height={50}
+              />
+              <div className="text-right">
+                <div className="text-2xl font-mono font-bold text-[var(--accent)]">
+                  {stats.tpsHistory.length > 0 ? stats.tpsHistory[stats.tpsHistory.length - 1].tps : 0}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">Current TPS</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Fee History */}
+          <div className="p-4 rounded-lg bg-[var(--bg-secondary)]">
+            <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Avg Fee Trend</div>
+            <div className="flex items-end justify-between gap-4">
+              <Sparkline
+                data={stats.feeHistory.map(p => ({ value: p.avgFee }))}
+                color="var(--warning)"
+                height={50}
+              />
+              <div className="text-right">
+                <div className="text-2xl font-mono font-bold text-[var(--warning)]">
+                  {formatFee(stats.avgFeePerTx)}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">Avg per TX</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Category Breakdown */}
+        <div className="mt-6 p-4 rounded-lg bg-[var(--bg-secondary)]">
+          <div className="text-xs text-[var(--text-muted)] uppercase mb-3">Transaction Categories</div>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(stats.categoryBreakdown)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 8)
+              .map(([cat, count]) => {
+                const pct = (count / stats.transactions) * 100;
+                const color = CATEGORY_COLORS[cat] || '#64748b';
+                return (
+                  <div key={cat} className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                    <span className="text-sm text-[var(--text-secondary)] capitalize">{cat}</span>
+                    <span className="text-xs font-mono text-[var(--text-muted)]">{pct.toFixed(1)}%</span>
+                  </div>
+                );
+              })}
           </div>
         </div>
       </div>
