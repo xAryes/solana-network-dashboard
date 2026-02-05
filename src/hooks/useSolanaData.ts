@@ -1571,3 +1571,131 @@ export function useHistoricalStats(hoursBack: number = 24) {
 
   return { stats, isLoading };
 }
+
+// ============================================
+// SOLANA COMPASS API - Real Historical Data
+// ============================================
+
+export interface EpochNetworkStats {
+  epoch: number;
+  totalSlots: number;
+  skippedSlots: number;
+  skipRate: number;
+  avgBlockTime: number;
+  medianBlockTime: number;
+  totalTransactions: number;
+  voteTransactions: number;
+  nonVoteTransactions: number;
+  successfulTx: number;
+  failedTx: number;
+  successRate: number;
+  totalCU: number;
+  avgCUPerBlock: number;
+  totalFees: number; // lamports
+  baseFees: number;
+  priorityFees: number;
+  jitoTips: number;
+  jitoTransactions: number;
+  avgJitoTip: number;
+  medianJitoTip: number;
+  avgFeeRatio: number; // priority/base ratio
+  packedSlots: number;
+  updatedAt: string;
+}
+
+export interface NetworkHistoryData {
+  currentEpoch: EpochNetworkStats | null;
+  previousEpochs: EpochNetworkStats[];
+  isLoading: boolean;
+  error: string | null;
+}
+
+async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats | null> {
+  try {
+    const response = await fetch(`https://solanacompass.com/api/epoch-performance/${epoch}?limit=1`);
+    if (!response.ok) return null;
+
+    const json = await response.json();
+    const data = json.data;
+
+    // Find the aggregate entry (leader: null) or use first entry
+    const aggregate = data.find((d: { leader: string | null }) => d.leader === null) || data[0];
+    if (!aggregate) return null;
+
+    // The API returns per-block averages, we need to calculate totals
+    const numSlots = aggregate.num_slots || 1;
+
+    return {
+      epoch,
+      totalSlots: numSlots,
+      skippedSlots: aggregate.skipped || 0,
+      skipRate: aggregate.skipped_percent || 0,
+      avgBlockTime: aggregate.average_block_time || 400,
+      medianBlockTime: aggregate.median_block_time || 400,
+      totalTransactions: (aggregate.txns || 0) * numSlots,
+      voteTransactions: (aggregate.vote_txns || 0) * numSlots,
+      nonVoteTransactions: (aggregate.non_vote_txns || 0) * numSlots,
+      successfulTx: (aggregate.success || 0) * numSlots,
+      failedTx: (aggregate.failed || 0) * numSlots,
+      successRate: aggregate.txns > 0 ? ((aggregate.success || 0) / aggregate.txns) * 100 : 0,
+      totalCU: (aggregate.cu || 0) * numSlots,
+      avgCUPerBlock: aggregate.cu || 0,
+      totalFees: aggregate.all_fees || 0,
+      baseFees: aggregate.base_fees || 0,
+      priorityFees: aggregate.priority_fees || 0,
+      jitoTips: aggregate.jito_total || 0,
+      jitoTransactions: aggregate.jito_transactions || 0,
+      avgJitoTip: aggregate.jito_avg_tip || 0,
+      medianJitoTip: aggregate.jito_med_tip || 0,
+      avgFeeRatio: aggregate.avg_fee_ratio || 0,
+      packedSlots: aggregate.packed_slots || numSlots,
+      updatedAt: aggregate.updated_at || new Date().toISOString(),
+    };
+  } catch (err) {
+    console.warn(`Failed to fetch epoch ${epoch} stats:`, err);
+    return null;
+  }
+}
+
+export function useNetworkHistory(epochsBack: number = 3) {
+  const [data, setData] = useState<NetworkHistoryData>({
+    currentEpoch: null,
+    previousEpochs: [],
+    isLoading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        // Get current epoch from RPC
+        const connection = getConnection();
+        const epochInfo = await connection.getEpochInfo();
+        const currentEpochNum = epochInfo.epoch;
+
+        // Fetch current and previous epochs
+        const epochs = Array.from({ length: epochsBack + 1 }, (_, i) => currentEpochNum - i);
+        const results = await Promise.all(epochs.map(e => fetchEpochStats(e)));
+
+        const validResults = results.filter((r): r is EpochNetworkStats => r !== null);
+
+        setData({
+          currentEpoch: validResults[0] || null,
+          previousEpochs: validResults.slice(1),
+          isLoading: false,
+          error: null,
+        });
+      } catch (err) {
+        console.warn('Failed to fetch network history:', err);
+        setData(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch historical data' }));
+      }
+    };
+
+    fetchHistory();
+    // Refresh every 2 minutes
+    const interval = setInterval(fetchHistory, 120000);
+    return () => clearInterval(interval);
+  }, [epochsBack]);
+
+  return data;
+}
