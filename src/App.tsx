@@ -2384,7 +2384,7 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
         </div>
 
       {/* Transaction Visualization */}
-      <div className="card p-6">
+      <div className="card p-6 overflow-hidden">
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Transaction Visualization</div>
@@ -2429,28 +2429,29 @@ function BlockDeepDive({ blocks }: { blocks: SlotData[] }) {
           </div>
 
           {/* Bar chart - full width visualization */}
-          <div className="ml-16 mr-4 h-64 relative">
+          <div className="ml-16 mr-4 h-64 relative overflow-hidden">
             {/* Section dividers - subtle */}
             <div className="absolute top-0 bottom-0 left-1/3 w-px bg-[var(--border-secondary)] z-10" />
             <div className="absolute top-0 bottom-0 left-2/3 w-px bg-[var(--border-secondary)] z-10" />
 
             {/* Bars container - using CSS grid for even distribution */}
             <div
-              className="absolute inset-0 flex items-end"
+              className="absolute inset-0 overflow-hidden"
               style={{
                 display: 'grid',
-                gridTemplateColumns: `repeat(${txsForChart.length}, 1fr)`,
+                gridTemplateColumns: `repeat(${Math.min(txsForChart.length, 2000)}, 1fr)`,
                 gap: txsForChart.length > 200 ? '0px' : '1px',
                 alignItems: 'end',
               }}
             >
-              {txsForChart.map((tx, i) => {
+              {txsForChart.slice(0, 2000).map((tx, i) => {
                 const heightPercent = Math.sqrt(tx.computeUnits / maxCU) * 100;
                 const color = getTxColor(tx);
                 const isHovered = hoveredTx === i;
                 const category = getTxCategory(tx.programs);
                 // Calculate position for smart tooltip placement
-                const positionPercent = (i / txsForChart.length) * 100;
+                const totalTxs = Math.min(txsForChart.length, 2000);
+                const positionPercent = (i / totalTxs) * 100;
                 const isLeftEdge = positionPercent < 20;
                 const isRightEdge = positionPercent > 80;
 
