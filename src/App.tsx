@@ -21,7 +21,54 @@ import {
   getTxCategory,
   CATEGORY_COLORS,
 } from './hooks/useSolanaData';
-import type { SlotData, LiveTransaction, LeaderScheduleInfo } from './hooks/useSolanaData';
+import type { SlotData, LiveTransaction, LeaderScheduleInfo, ValidatorMetadata } from './hooks/useSolanaData';
+
+// Generate a gradient color based on pubkey for avatar fallback
+function getAvatarGradient(pubkey: string): string {
+  const hash = pubkey.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const hue1 = hash % 360;
+  const hue2 = (hash * 7) % 360;
+  return `linear-gradient(135deg, hsl(${hue1}, 70%, 50%), hsl(${hue2}, 70%, 40%))`;
+}
+
+// Country code to flag emoji mapping
+const COUNTRY_FLAGS: Record<string, string> = {
+  'US': '🇺🇸', 'USA': '🇺🇸', 'United States': '🇺🇸',
+  'DE': '🇩🇪', 'Germany': '🇩🇪',
+  'NL': '🇳🇱', 'Netherlands': '🇳🇱',
+  'GB': '🇬🇧', 'UK': '🇬🇧', 'United Kingdom': '🇬🇧',
+  'FR': '🇫🇷', 'France': '🇫🇷',
+  'JP': '🇯🇵', 'Japan': '🇯🇵',
+  'SG': '🇸🇬', 'Singapore': '🇸🇬',
+  'CA': '🇨🇦', 'Canada': '🇨🇦',
+  'AU': '🇦🇺', 'Australia': '🇦🇺',
+  'FI': '🇫🇮', 'Finland': '🇫🇮',
+  'CH': '🇨🇭', 'Switzerland': '🇨🇭',
+  'IE': '🇮🇪', 'Ireland': '🇮🇪',
+  'HK': '🇭🇰', 'Hong Kong': '🇭🇰',
+  'KR': '🇰🇷', 'South Korea': '🇰🇷',
+  'PL': '🇵🇱', 'Poland': '🇵🇱',
+  'UA': '🇺🇦', 'Ukraine': '🇺🇦',
+  'RU': '🇷🇺', 'Russia': '🇷🇺',
+  'IN': '🇮🇳', 'India': '🇮🇳',
+  'BR': '🇧🇷', 'Brazil': '🇧🇷',
+};
+
+function formatLocation(location?: string): string {
+  if (!location) return '🌐';
+  // Try to extract country and add flag
+  for (const [code, flag] of Object.entries(COUNTRY_FLAGS)) {
+    if (location.includes(code) || location.toLowerCase().includes(code.toLowerCase())) {
+      // Extract city if available
+      const parts = location.split(',');
+      if (parts.length > 1) {
+        return `${flag} ${parts[0].trim()}`;
+      }
+      return flag;
+    }
+  }
+  return `🌐 ${location.split(',')[0] || ''}`.trim();
+}
 
 // Section definitions for navigation - streamlined for better UX
 const SECTIONS = [
@@ -48,7 +95,7 @@ function App() {
   const { schedule: leaderSchedule } = useLeaderSchedule(stats?.currentSlot || 0);
   const { transactions: liveTxs, isConnected: wsConnected } = useLiveTransactions(30);
   const { validatorInfo: topValidators } = useTopValidators(15);
-  const { getName: getValidatorName } = useValidatorNames();
+  const { getName: getValidatorName, getMetadata: getValidatorMetadata } = useValidatorNames();
 
   // Active section tracking for navigation
   const [activeSection, setActiveSection] = useState('overview');
@@ -361,7 +408,8 @@ function App() {
             leaderSchedule={leaderSchedule}
             currentSlot={stats.currentSlot}
             getValidatorName={getValidatorName}
-            validatorCount={validators?.totalValidators || 0}
+            getValidatorMetadata={getValidatorMetadata}
+            validatorCount={validators?.activeValidators || 0}
           />
         </section>
 
@@ -1154,11 +1202,13 @@ function LeaderSchedulePanel({
   leaderSchedule,
   currentSlot,
   getValidatorName,
+  getValidatorMetadata,
   validatorCount,
 }: {
   leaderSchedule: LeaderScheduleInfo | null;
   currentSlot: number;
   getValidatorName: (pubkey: string) => string | null;
+  getValidatorMetadata: (pubkey: string) => ValidatorMetadata | null;
   validatorCount: number;
 }) {
   if (!leaderSchedule) {
@@ -1172,12 +1222,17 @@ function LeaderSchedulePanel({
     );
   }
 
-  // Get leaders with names
-  const leaders = leaderSchedule.upcomingLeaders.slice(0, 12).map(entry => ({
-    ...entry,
-    name: getValidatorName(entry.leader) || entry.leader.slice(0, 8) + '...',
-    shortName: (getValidatorName(entry.leader) || entry.leader).slice(0, 12),
-  }));
+  // Get leaders with names and metadata
+  const leaders = leaderSchedule.upcomingLeaders.slice(0, 12).map(entry => {
+    const metadata = getValidatorMetadata(entry.leader);
+    return {
+      ...entry,
+      name: metadata?.name || getValidatorName(entry.leader) || entry.leader.slice(0, 8) + '...',
+      shortName: (metadata?.name || getValidatorName(entry.leader) || entry.leader).slice(0, 12),
+      logo: metadata?.logo,
+      location: metadata?.location,
+    };
+  });
 
   const currentLeader = leaders[0];
   const upcomingLeaders = leaders.slice(1);
@@ -1192,10 +1247,24 @@ function LeaderSchedulePanel({
             <div className="p-4 rounded-xl bg-gradient-to-br from-[var(--accent-tertiary)]/20 to-transparent border border-[var(--accent-tertiary)]/30">
               <div className="flex items-center gap-3 mb-3">
                 <div className="relative">
-                  <div className="w-12 h-12 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center border-2 border-[var(--accent-tertiary)]">
-                    <span className="text-lg font-bold text-[var(--accent-tertiary)]">
-                      {currentLeader.name.slice(0, 2).toUpperCase()}
-                    </span>
+                  {currentLeader.logo ? (
+                    <img
+                      src={currentLeader.logo}
+                      alt={currentLeader.name}
+                      className="w-12 h-12 rounded-full border-2 border-[var(--accent-tertiary)] object-cover shadow-lg"
+                      onError={(e) => {
+                        // Fallback to gradient on error
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        target.nextElementSibling?.classList.remove('hidden');
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`w-12 h-12 rounded-full flex items-center justify-center border-2 border-[var(--accent-tertiary)] text-white font-bold text-lg shadow-lg ${currentLeader.logo ? 'hidden' : ''}`}
+                    style={{ background: getAvatarGradient(currentLeader.leader) }}
+                  >
+                    {currentLeader.name.slice(0, 2).toUpperCase()}
                   </div>
                   <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[var(--accent-tertiary)] flex items-center justify-center">
                     <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
@@ -1203,18 +1272,38 @@ function LeaderSchedulePanel({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-[var(--text-primary)] truncate">{currentLeader.name}</div>
-                  <div className="text-xs text-[var(--text-muted)]">Producing blocks now</div>
+                  <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                    <span>Producing blocks now</span>
+                    <span className="text-[var(--text-tertiary)]">{formatLocation(currentLeader.location)}</span>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-[var(--text-muted)]">Slot</span>
                 <span className="font-mono text-[var(--accent-tertiary)]">{currentLeader.slot.toLocaleString()}</span>
               </div>
-              {/* Progress indicator */}
+              {/* Progress indicator - 4 slots per leader */}
               <div className="mt-3 flex gap-1">
-                {[...Array(4)].map((_, i) => (
-                  <div key={i} className="flex-1 h-1 rounded-full bg-[var(--accent-tertiary)]" />
-                ))}
+                {[...Array(4)].map((_, i) => {
+                  const slotInSequence = currentSlot - currentLeader.slot;
+                  const isCompleted = i < slotInSequence;
+                  const isCurrent = i === slotInSequence;
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 h-1.5 rounded-full transition-all duration-300 ${
+                        isCompleted
+                          ? 'bg-[var(--accent-tertiary)]'
+                          : isCurrent
+                          ? 'bg-[var(--accent-tertiary)] animate-pulse'
+                          : 'bg-[var(--bg-tertiary)]'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mt-1 text-[10px] text-[var(--text-muted)] text-center">
+                Slot {Math.min(4, Math.max(1, currentSlot - currentLeader.slot + 1))} of 4
               </div>
             </div>
           ) : (
@@ -1245,16 +1334,36 @@ function LeaderSchedulePanel({
 
           {/* Leaders Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {upcomingLeaders.map((leader, i) => (
+            {upcomingLeaders.map((leader) => (
               <div
                 key={leader.slot}
                 className="flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors"
               >
-                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-xs font-mono text-[var(--text-muted)]">
-                  {i + 1}
+                <div className="relative w-8 h-8 flex-shrink-0">
+                  {leader.logo ? (
+                    <img
+                      src={leader.logo}
+                      alt={leader.name}
+                      className="w-8 h-8 rounded-full object-cover shadow"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        target.nextElementSibling?.classList.remove('hidden');
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow ${leader.logo ? 'hidden' : ''}`}
+                    style={{ background: getAvatarGradient(leader.leader) }}
+                  >
+                    {leader.shortName.slice(0, 2).toUpperCase()}
+                  </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-[var(--text-secondary)] truncate">{leader.shortName}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-[var(--text-secondary)] truncate">{leader.shortName}</span>
+                    <span className="text-[10px] text-[var(--text-tertiary)]">{formatLocation(leader.location)}</span>
+                  </div>
                   <div className="text-[10px] text-[var(--text-muted)] font-mono">
                     Slot {leader.slot.toLocaleString()}
                   </div>
