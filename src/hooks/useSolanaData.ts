@@ -786,17 +786,20 @@ export async function fetchValidatorNames(): Promise<Map<string, string>> {
 // Hook to get validator names
 export function useValidatorNames() {
   const [names, setNames] = useState<Map<string, string>>(validatorNamesCache);
+  const [metadata, setMetadata] = useState<Map<string, ValidatorMetadata>>(validatorInfoCache);
   const [isLoading, setIsLoading] = useState(!validatorNamesFetched);
 
   useEffect(() => {
-    if (validatorNamesFetched && validatorNamesCache.size > 0) {
+    if (validatorInfoFetched && validatorInfoCache.size > 0) {
       setNames(validatorNamesCache);
+      setMetadata(new Map(validatorInfoCache));
       setIsLoading(false);
       return;
     }
 
     fetchValidatorInfo().then(() => {
       setNames(new Map(validatorNamesCache));
+      setMetadata(new Map(validatorInfoCache));
       setIsLoading(false);
     });
   }, []);
@@ -806,8 +809,8 @@ export function useValidatorNames() {
   }, [names]);
 
   const getMetadata = useCallback((pubkey: string): ValidatorMetadata | null => {
-    return validatorInfoCache.get(pubkey) || null;
-  }, []);
+    return metadata.get(pubkey) || null;
+  }, [metadata]);
 
   return { names, getName, getMetadata, isLoading };
 }
