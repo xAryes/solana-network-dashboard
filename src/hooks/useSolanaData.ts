@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
-// RPC endpoints - Alchemy primary, Helius fallback
+// RPC endpoints - Helius primary (premium), Alchemy fallback
+const HELIUS_API_KEY = 'REDACTED_HELIUS_KEY';
+const HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+const HELIUS_API = `https://api.helius.xyz/v0`;
 const ALCHEMY_RPC = 'https://solana-mainnet.g.alchemy.com/v2/REDACTED_ALCHEMY_KEY';
-const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=REDACTED_HELIUS_KEY_OLD';
 
 // Primary and fallback connections
 let primaryConnection: Connection | null = null;
 let fallbackConnection: Connection | null = null;
-let useAlchemy = true; // Track which provider is active
+let useHelius = true; // Helius premium is primary
 
 // Solana block limits
 export const SOLANA_LIMITS = {
@@ -27,6 +29,7 @@ export interface SlotData {
   totalFees?: number;
   successRate?: number;
   totalCU?: number;
+  leader?: string;
   transactions?: TransactionInfo[];
 }
 
@@ -157,17 +160,24 @@ export interface BlockProductionInfo {
 
 // Connection management with automatic fallback
 function getConnection(): Connection {
-  if (useAlchemy) {
+  if (useHelius) {
     if (!primaryConnection) {
-      primaryConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
+      primaryConnection = new Connection(HELIUS_RPC, { commitment: 'confirmed' });
     }
     return primaryConnection;
   } else {
     if (!fallbackConnection) {
-      fallbackConnection = new Connection(HELIUS_RPC, { commitment: 'confirmed' });
+      fallbackConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
     }
     return fallbackConnection;
   }
+}
+
+function getFallbackConnection(): Connection {
+  if (!fallbackConnection) {
+    fallbackConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
+  }
+  return fallbackConnection;
 }
 
 export function useNetworkStats() {
@@ -180,13 +190,26 @@ export function useNetworkStats() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const connection = getConnection();
-      const [slot, epochInfo, perfSamples, txCount] = await Promise.all([
-        connection.getSlot(),
-        connection.getEpochInfo(),
-        connection.getRecentPerformanceSamples(5),
-        connection.getTransactionCount().catch(() => undefined),
-      ]);
+      // Try primary (Helius), fall back to Alchemy
+      let connection = getConnection();
+      let slot: number, epochInfo: Awaited<ReturnType<Connection['getEpochInfo']>>, perfSamples: Awaited<ReturnType<Connection['getRecentPerformanceSamples']>>, txCount: number | undefined;
+      try {
+        [slot, epochInfo, perfSamples, txCount] = await Promise.all([
+          connection.getSlot(),
+          connection.getEpochInfo(),
+          connection.getRecentPerformanceSamples(5),
+          connection.getTransactionCount().catch(() => undefined),
+        ]);
+      } catch {
+        console.warn('[useNetworkStats] Primary RPC failed, trying Alchemy fallback...');
+        connection = getFallbackConnection();
+        [slot, epochInfo, perfSamples, txCount] = await Promise.all([
+          connection.getSlot(),
+          connection.getEpochInfo(),
+          connection.getRecentPerformanceSamples(5),
+          connection.getTransactionCount().catch(() => undefined),
+        ]);
+      }
 
       const avgTps = perfSamples.length > 0
         ? perfSamples.reduce((sum, s) => sum + (s.numTransactions / s.samplePeriodSecs), 0) / perfSamples.length
@@ -249,18 +272,43 @@ export function useRecentBlocks(count: number = 10) {
 
   const fetchBlocks = useCallback(async () => {
     try {
-      const connection = getConnection();
-      const slot = await connection.getSlot();
+      const primary = getConnection();
+      const fallback = getFallbackConnection();
+
+      // Get slot — try primary, fall back to Alchemy
+      let slot: number;
+      try {
+        slot = await primary.getSlot();
+      } catch {
+        console.warn('[useRecentBlocks] Primary getSlot failed, using Alchemy fallback');
+        slot = await fallback.getSlot();
+      }
       const slots = Array.from({ length: count }, (_, i) => slot - i);
 
+      // Fetch slot leaders for this range (non-blocking, best-effort)
+      const leaderMap = new Map<number, string>();
+      try {
+        const startSlot = slots[slots.length - 1];
+        const leaders = await primary.getSlotLeaders(startSlot, count);
+        leaders.forEach((leader, i) => {
+          leaderMap.set(startSlot + i, leader.toBase58());
+        });
+      } catch {
+        // Leader info is optional — don't block on failure
+      }
+
+      // Fetch blocks in parallel — try primary (Helius), fall back to Alchemy per-block
       const blockPromises = slots.map(async (s): Promise<SlotData | null> => {
         try {
-          const block = await connection.getBlock(s, {
+          const blockOpts = {
             maxSupportedTransactionVersion: 0,
-            transactionDetails: 'full',
+            transactionDetails: 'full' as const,
             rewards: false,
-          });
-
+          };
+          let block = await primary.getBlock(s, blockOpts).catch(() => null);
+          if (!block) {
+            block = await fallback.getBlock(s, blockOpts).catch(() => null);
+          }
           if (!block) return null;
 
           let totalFees = 0;
@@ -276,41 +324,39 @@ export function useRecentBlocks(count: number = 10) {
               const cu = tx.meta?.computeUnitsConsumed ?? 200000;
               const numSignatures = tx.transaction.signatures.length;
 
-              // Extract program IDs and account keys
               const programs: string[] = [];
               const message = tx.transaction.message;
-              let accountKeys: string[] = [];
 
-              // Handle both legacy and versioned transactions
-              if ('accountKeys' in message) {
-                // Legacy transaction
-                accountKeys = message.accountKeys.map((k: { toBase58?: () => string }) =>
-                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
-                );
-                // Program IDs are typically the accounts that are invoked
-                // We can identify them from the compiled instructions
-                if ('compiledInstructions' in message) {
-                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
-                    const programId = accountKeys[ix.programIdIndex];
-                    if (programId && !programs.includes(programId)) {
-                      programs.push(programId);
-                    }
-                  }
-                } else if ('instructions' in message) {
-                  for (const ix of (message as { instructions: { programIdIndex: number }[] }).instructions) {
-                    const programId = accountKeys[ix.programIdIndex];
-                    if (programId && !programs.includes(programId)) {
-                      programs.push(programId);
-                    }
+              // Build account keys array — handles both legacy and v0 messages
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const msg = message as any;
+              const rawKeys = msg.accountKeys ?? msg.staticAccountKeys ?? [];
+              const accountKeys: string[] = rawKeys.map((k: { toBase58?: () => string }) =>
+                typeof k === 'string' ? k : k.toBase58 ? k.toBase58() : String(k)
+              );
+
+              // Also include address lookup table keys for v0 transactions
+              if (tx.meta?.loadedAddresses) {
+                const la = tx.meta.loadedAddresses;
+                for (const k of [...(la.writable ?? []), ...(la.readonly ?? [])]) {
+                  accountKeys.push(typeof k === 'string' ? k : (k as { toBase58?: () => string }).toBase58 ? (k as { toBase58: () => string }).toBase58() : String(k));
+                }
+              }
+
+              // Extract programs via programIdIndex from top-level instructions
+              if (msg.instructions) {
+                for (const ix of msg.instructions) {
+                  const programId = accountKeys[ix.programIdIndex];
+                  if (programId && !programs.includes(programId)) {
+                    programs.push(programId);
                   }
                 }
-              } else if ('staticAccountKeys' in message) {
-                // Versioned transaction (v0)
-                accountKeys = (message as { staticAccountKeys: { toBase58?: () => string }[] }).staticAccountKeys.map((k) =>
-                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
-                );
-                if ('compiledInstructions' in message) {
-                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
+              }
+
+              // Also extract from inner instructions (CPI calls)
+              if (tx.meta?.innerInstructions) {
+                for (const inner of tx.meta.innerInstructions) {
+                  for (const ix of inner.instructions) {
                     const programId = accountKeys[ix.programIdIndex];
                     if (programId && !programs.includes(programId)) {
                       programs.push(programId);
@@ -334,9 +380,8 @@ export function useRecentBlocks(count: number = 10) {
                     jitoTip += balanceChange;
                   }
                 }
-                // Track SOL movement for the fee payer (excluding fee)
                 if (i === 0) {
-                  solMovement = balanceChange + fee; // Add back the fee to get net movement
+                  solMovement = balanceChange + fee;
                 }
               }
 
@@ -370,9 +415,11 @@ export function useRecentBlocks(count: number = 10) {
             totalFees,
             successRate: txCount > 0 ? (successCount / txCount) * 100 : 100,
             totalCU,
-            transactions, // Keep all transactions for full block visualization
+            leader: leaderMap.get(s),
+            transactions,
           };
-        } catch {
+        } catch (blockErr) {
+          console.error(`[useRecentBlocks] Block ${s} failed:`, blockErr);
           return null;
         }
       });
@@ -380,17 +427,19 @@ export function useRecentBlocks(count: number = 10) {
       const results = await Promise.all(blockPromises);
       const validBlocks = results.filter((b): b is SlotData => b !== null);
 
+      console.log(`[useRecentBlocks] Fetched ${validBlocks.length}/${count} blocks`);
+
       if (validBlocks.length > 0) {
         setBlocks(validBlocks);
         setError(null);
         // Store blocks for historical analysis (async, don't await)
         for (const block of validBlocks) {
-          storeBlockData(block);
+          storeBlockData(block).catch(() => {});
         }
       }
       setIsLoading(false);
     } catch (err) {
-      console.warn('Failed to fetch blocks:', err);
+      console.error('[useRecentBlocks] Failed to fetch blocks:', err);
       setError('Failed to fetch blocks');
       setIsLoading(false);
     }
@@ -473,8 +522,7 @@ export function useValidatorInfo() {
 // Get recent transactions across blocks
 export function useRecentTransactions(blocks: SlotData[]) {
   const transactions = blocks
-    .flatMap(block => block.transactions || [])
-    .slice(0, 20);
+    .flatMap(block => block.transactions || []);
 
   return { transactions };
 }
@@ -602,7 +650,7 @@ export interface PriorityFeeInfo {
   available: boolean;
 }
 
-// Get priority fees - requires Developer+ Helius plan
+// Get priority fees via Helius getPriorityFeeEstimate (premium)
 export function usePriorityFees() {
   const [fees, setFees] = useState<PriorityFeeInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -611,69 +659,99 @@ export function usePriorityFees() {
   useEffect(() => {
     const fetchFees = async () => {
       try {
-        const connection = getConnection();
+        // Use Helius getPriorityFeeEstimate for accurate percentile data
+        const response = await fetch(HELIUS_RPC, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'priority-fees',
+            method: 'getPriorityFeeEstimate',
+            params: [{ options: { includeAllPriorityFeeLevels: true } }],
+          }),
+        });
 
-        // Try to fetch recent prioritization fees
-        // This requires Developer+ Helius plan
-        const recentFees = await connection.getRecentPrioritizationFees();
+        const data = await response.json();
+        const levels = data?.result?.priorityFeeLevels;
 
-        if (recentFees && recentFees.length > 0) {
-          // Extract fee values and sort
-          const feeValues = recentFees
+        if (levels) {
+          setFees({
+            min: Math.round(levels.min || 0),
+            median: Math.round(levels.medium || 0),
+            p75: Math.round(levels.high || 0),
+            p90: Math.round(levels.veryHigh || 0),
+            max: Math.round(levels.unsafeMax || 0),
+            recommended: Math.round(levels.medium || 0),
+            available: true,
+          });
+          setIsAvailable(true);
+        } else {
+          // Fallback to standard RPC method
+          const connection = getConnection();
+          const recentFees = await connection.getRecentPrioritizationFees();
+          const feeValues = (recentFees || [])
             .map(f => f.prioritizationFee)
             .filter(f => f > 0)
             .sort((a, b) => a - b);
 
           if (feeValues.length > 0) {
-            const min = feeValues[0];
-            const max = feeValues[feeValues.length - 1];
-            const median = feeValues[Math.floor(feeValues.length / 2)];
-            const p75 = feeValues[Math.floor(feeValues.length * 0.75)];
-            const p90 = feeValues[Math.floor(feeValues.length * 0.90)];
-            // Recommended: slightly above median for good inclusion
-            const recommended = Math.ceil(median * 1.2);
-
             setFees({
-              min,
-              median,
-              p75,
-              p90,
-              max,
-              recommended,
+              min: feeValues[0],
+              median: feeValues[Math.floor(feeValues.length / 2)],
+              p75: feeValues[Math.floor(feeValues.length * 0.75)],
+              p90: feeValues[Math.floor(feeValues.length * 0.90)],
+              max: feeValues[feeValues.length - 1],
+              recommended: Math.ceil(feeValues[Math.floor(feeValues.length / 2)] * 1.2),
               available: true,
             });
-            setIsAvailable(true);
-          } else {
-            // No fees found (all zero)
-            setFees({
-              min: 0,
-              median: 0,
-              p75: 0,
-              p90: 0,
-              max: 0,
-              recommended: 0,
-              available: true,
-            });
-            setIsAvailable(true);
           }
-        } else {
-          setIsAvailable(false);
+          setIsAvailable(feeValues.length > 0);
         }
         setIsLoading(false);
       } catch (err) {
-        // Method not available on this plan
-        console.warn('Priority fees not available (requires Developer+ plan):', err);
+        console.warn('Priority fees fetch error:', err);
         setIsAvailable(false);
         setIsLoading(false);
       }
     };
 
     fetchFees();
-    const interval = setInterval(fetchFees, 10000); // Every 10s for fees
+    const interval = setInterval(fetchFees, 10000);
     return () => clearInterval(interval);
   }, []);
 
   return { fees, isLoading, isAvailable };
+}
+
+// Helius Enhanced Transaction data
+export interface EnhancedTransaction {
+  signature: string;
+  type: string; // SWAP, TRANSFER, NFT_SALE, etc.
+  source: string; // Jupiter, Orca, Raydium, etc.
+  description: string;
+  fee: number;
+  feePayer: string;
+  timestamp: number;
+  nativeTransfers: Array<{ fromUserAccount: string; toUserAccount: string; amount: number }>;
+  tokenTransfers: Array<{ fromUserAccount: string; toUserAccount: string; mint: string; tokenAmount: number; tokenStandard?: string }>;
+}
+
+// Fetch enriched transaction data from Helius Enhanced Transactions API
+export async function fetchEnhancedTransactions(signatures: string[]): Promise<EnhancedTransaction[]> {
+  if (signatures.length === 0) return [];
+  // API accepts up to 100 signatures per call
+  const batch = signatures.slice(0, 100);
+  try {
+    const response = await fetch(`${HELIUS_API}/transactions?api-key=${HELIUS_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions: batch }),
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
 }
 
 // Helper to format SOL
@@ -866,69 +944,73 @@ export interface LeaderScheduleInfo {
 export function useLeaderSchedule(currentSlot: number) {
   const [schedule, setSchedule] = useState<LeaderScheduleInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Cache the raw leader schedule + epoch start slot so we don't refetch on every slot change
+  const cachedScheduleRef = useRef<{ leaderSchedule: Record<string, number[]>; epochStartSlot: number; epoch: number } | null>(null);
+  const currentSlotRef = useRef(currentSlot);
+  currentSlotRef.current = currentSlot;
 
+  // Fetch the raw leader schedule once, then refetch only every 5 minutes
   useEffect(() => {
-    const fetchSchedule = async () => {
-      if (!currentSlot) return;
+    let cancelled = false;
 
+    const fetchRawSchedule = async () => {
       try {
         const connection = getConnection();
-        const leaderSchedule = await connection.getLeaderSchedule();
+        const [leaderSchedule, epochInfo] = await Promise.all([
+          connection.getLeaderSchedule(),
+          connection.getEpochInfo(),
+        ]);
 
-        if (!leaderSchedule) {
-          setIsLoading(false);
+        if (cancelled || !leaderSchedule) {
+          if (!cancelled) setIsLoading(false);
           return;
         }
 
-        // Get epoch info to calculate slot offsets
-        const epochInfo = await connection.getEpochInfo();
-        const epochStartSlot = currentSlot - epochInfo.slotIndex;
-
-        // Build upcoming leaders list
-        const upcomingLeaders: LeaderScheduleEntry[] = [];
-        const leaderCounts = new Map<string, number>();
-
-        // Create a slot-to-leader map for next 100 slots
-        const slotToLeader = new Map<number, string>();
-
-        for (const [leader, slots] of Object.entries(leaderSchedule)) {
-          // Count total slots for this leader
-          leaderCounts.set(leader, slots.length);
-
-          for (const slotOffset of slots) {
-            const absoluteSlot = epochStartSlot + slotOffset;
-            if (absoluteSlot >= currentSlot && absoluteSlot < currentSlot + 100) {
-              slotToLeader.set(absoluteSlot, leader);
-            }
-          }
-        }
-
-        // Sort and collect upcoming slots
-        const sortedSlots = Array.from(slotToLeader.keys()).sort((a, b) => a - b);
-        for (const slot of sortedSlots.slice(0, 20)) {
-          const leader = slotToLeader.get(slot)!;
-          upcomingLeaders.push({
-            slot,
-            leader,
-            relativeSlot: slot - currentSlot,
-          });
-        }
-
-        setSchedule({
-          currentSlot,
-          upcomingLeaders,
-          leaderCounts,
-        });
-        setIsLoading(false);
+        const slot = currentSlotRef.current;
+        const epochStartSlot = slot - epochInfo.slotIndex;
+        cachedScheduleRef.current = { leaderSchedule, epochStartSlot, epoch: epochInfo.epoch };
+        console.log(`[useLeaderSchedule] Fetched schedule for epoch ${epochInfo.epoch}, epochStart=${epochStartSlot}`);
       } catch (err) {
         console.warn('Failed to fetch leader schedule:', err);
-        setIsLoading(false);
       }
+      if (!cancelled) setIsLoading(false);
     };
 
-    fetchSchedule();
-    const interval = setInterval(fetchSchedule, 30000); // Every 30s
-    return () => clearInterval(interval);
+    fetchRawSchedule();
+    const interval = setInterval(fetchRawSchedule, 5 * 60 * 1000); // Every 5 minutes
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []); // No dependencies — fetch once on mount, refetch on interval
+
+  // Recompute the "upcoming leaders" view whenever currentSlot changes (cheap, no RPC)
+  useEffect(() => {
+    if (!currentSlot || !cachedScheduleRef.current) return;
+
+    const { leaderSchedule, epochStartSlot } = cachedScheduleRef.current;
+    const upcomingLeaders: LeaderScheduleEntry[] = [];
+    const leaderCounts = new Map<string, number>();
+    const slotToLeader = new Map<number, string>();
+
+    for (const [leader, slots] of Object.entries(leaderSchedule)) {
+      leaderCounts.set(leader, slots.length);
+      for (const slotOffset of slots) {
+        const absoluteSlot = epochStartSlot + slotOffset;
+        if (absoluteSlot >= currentSlot && absoluteSlot < currentSlot + 100) {
+          slotToLeader.set(absoluteSlot, leader);
+        }
+      }
+    }
+
+    const sortedSlots = Array.from(slotToLeader.keys()).sort((a, b) => a - b);
+    for (const slot of sortedSlots.slice(0, 20)) {
+      const leader = slotToLeader.get(slot)!;
+      upcomingLeaders.push({
+        slot,
+        leader,
+        relativeSlot: slot - currentSlot,
+      });
+    }
+
+    setSchedule({ currentSlot, upcomingLeaders, leaderCounts });
   }, [currentSlot]);
 
   return { schedule, isLoading };
@@ -1174,7 +1256,7 @@ export function useTopValidators(limit: number = 20) {
         // Sort by stake descending
         allValidators.sort((a, b) => b.activatedStake - a.activatedStake);
 
-        const topValidators = allValidators.slice(0, limit);
+        const topValidators = limit > 0 ? allValidators.slice(0, limit) : allValidators;
         const totalStake = allValidators.reduce((sum, v) => sum + v.activatedStake, 0);
         const avgCommission = topValidators.length > 0
           ? topValidators.reduce((sum, v) => sum + v.commission, 0) / topValidators.length
