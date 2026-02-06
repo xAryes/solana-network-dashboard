@@ -1,6 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
+// Inline base58 decoder (avoids missing @types/bs58)
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const B58_MAP = new Uint8Array(128).fill(255);
+for (let i = 0; i < B58_ALPHABET.length; i++) B58_MAP[B58_ALPHABET.charCodeAt(i)] = i;
+function decodeBase58(str: string): Uint8Array {
+  const bytes: number[] = [0];
+  for (const ch of str) {
+    let carry = B58_MAP[ch.charCodeAt(0)];
+    if (carry === 255) throw new Error('Invalid base58 character');
+    for (let j = 0; j < bytes.length; j++) { carry += bytes[j] * 58; bytes[j] = carry & 0xff; carry >>= 8; }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (const ch of str) { if (ch !== '1') break; bytes.push(0); }
+  return new Uint8Array(bytes.reverse());
+}
+
 // RPC endpoints - Helius primary (premium), Alchemy fallback
 const HELIUS_API_KEY = 'bfdf3ec6-75a8-4dd9-b9dd-c0efd2afbfc4';
 const HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
@@ -33,6 +49,29 @@ export interface SlotData {
   transactions?: TransactionInfo[];
 }
 
+export interface BalanceChange {
+  account: string;
+  before: number; // lamports
+  after: number;
+  change: number;
+}
+
+export interface TokenBalanceChange {
+  account: string;
+  mint: string;
+  before: number;
+  after: number;
+  change: number;
+  decimals: number;
+}
+
+export interface InstructionInfo {
+  programId: string;
+  accounts: string[];
+  dataBase58: string;
+  innerInstructions?: InstructionInfo[];
+}
+
 export interface TransactionInfo {
   signature: string;
   success: boolean;
@@ -44,6 +83,17 @@ export interface TransactionInfo {
   jitoTip: number; // Jito tip amount in lamports (0 if none)
   feePayer: string; // First signer / fee payer
   solMovement: number; // Net SOL movement (excluding fees) in lamports
+  txIndex: number; // 0-based position in block
+  accountCount: number; // total accounts (static + LUT loaded)
+  lutCount: number; // addresses from Address Lookup Tables
+  cuRequested: number; // CU budget from SetComputeUnitLimit (default 200k)
+  cuPrice: number; // micro-lamports per CU from SetComputeUnitPrice (0 if not set)
+  priorityFee: number; // fee - (numSignatures * 5000), clipped at 0
+  balanceChanges: BalanceChange[]; // SOL balance changes for non-trivial accounts
+  tokenBalanceChanges: TokenBalanceChange[]; // SPL token balance changes
+  instructions: InstructionInfo[]; // top-level instruction tree with inner ixs
+  logMessages: string[]; // program log messages
+  errorMsg: string | null; // error string if failed
 }
 
 // Jito tip accounts - tips sent to these addresses are Jito MEV tips
@@ -365,6 +415,36 @@ export function useRecentBlocks(count: number = 10) {
                 }
               }
 
+              // Parse ComputeBudget instructions for CU limit and price
+              const COMPUTE_BUDGET_ID = 'ComputeBudget111111111111111111111111111111';
+              let cuRequested = 200_000; // default
+              let cuPrice = 0;
+              if (msg.instructions) {
+                for (const ix of msg.instructions) {
+                  const programId = accountKeys[ix.programIdIndex];
+                  if (programId === COMPUTE_BUDGET_ID && ix.data) {
+                    try {
+                      const data = decodeBase58(ix.data);
+                      if (data[0] === 0x02 && data.length >= 5) {
+                        // SetComputeUnitLimit: discriminator 0x02 + u32 LE
+                        cuRequested = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+                      } else if (data[0] === 0x03 && data.length >= 9) {
+                        // SetComputeUnitPrice: discriminator 0x03 + u64 LE (micro-lamports)
+                        cuPrice = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24)
+                          + (data[5] | (data[6] << 8) | (data[7] << 16) | (data[8] << 24)) * 0x100000000;
+                      }
+                    } catch {
+                      // malformed data — keep defaults
+                    }
+                  }
+                }
+              }
+
+              // Compute LUT-loaded account count
+              const la = tx.meta?.loadedAddresses;
+              const lutCount = la ? (la.writable?.length ?? 0) + (la.readonly?.length ?? 0) : 0;
+              const accountCount = rawKeys.length + lutCount;
+
               // Get fee payer (first account)
               const feePayer = accountKeys[0] || '';
 
@@ -385,6 +465,70 @@ export function useRecentBlocks(count: number = 10) {
                 }
               }
 
+              // Priority fee = total fee minus base fee (5000 lamports per signature)
+              const priorityFee = Math.max(0, fee - numSignatures * 5000);
+
+              // Balance changes — only significant (non-zero, skip fee payer if only fee change)
+              const balanceChanges: BalanceChange[] = [];
+              for (let i = 0; i < Math.min(accountKeys.length, preBalances.length, postBalances.length); i++) {
+                const change = (postBalances[i] ?? 0) - (preBalances[i] ?? 0);
+                if (change !== 0) {
+                  balanceChanges.push({ account: accountKeys[i], before: preBalances[i], after: postBalances[i], change });
+                }
+              }
+
+              // Token balance changes
+              const tokenBalanceChanges: TokenBalanceChange[] = [];
+              const preTokenBals = (tx.meta as Record<string, unknown>)?.preTokenBalances as Array<{ accountIndex: number; mint: string; uiTokenAmount: { amount: string; decimals: number } }> | undefined;
+              const postTokenBals = (tx.meta as Record<string, unknown>)?.postTokenBalances as Array<{ accountIndex: number; mint: string; uiTokenAmount: { amount: string; decimals: number } }> | undefined;
+              if (preTokenBals || postTokenBals) {
+                const preMap = new Map<number, { mint: string; amount: number; decimals: number }>();
+                const postMap = new Map<number, { mint: string; amount: number; decimals: number }>();
+                for (const tb of preTokenBals ?? []) {
+                  preMap.set(tb.accountIndex, { mint: tb.mint, amount: Number(tb.uiTokenAmount?.amount ?? 0), decimals: tb.uiTokenAmount?.decimals ?? 0 });
+                }
+                for (const tb of postTokenBals ?? []) {
+                  postMap.set(tb.accountIndex, { mint: tb.mint, amount: Number(tb.uiTokenAmount?.amount ?? 0), decimals: tb.uiTokenAmount?.decimals ?? 0 });
+                }
+                const allIndices = new Set([...preMap.keys(), ...postMap.keys()]);
+                for (const idx of allIndices) {
+                  const pre = preMap.get(idx);
+                  const post = postMap.get(idx);
+                  const mint = post?.mint ?? pre?.mint ?? '';
+                  const before = pre?.amount ?? 0;
+                  const after = post?.amount ?? 0;
+                  const decimals = post?.decimals ?? pre?.decimals ?? 0;
+                  if (before !== after) {
+                    tokenBalanceChanges.push({ account: accountKeys[idx] ?? `index:${idx}`, mint, before, after, change: after - before, decimals });
+                  }
+                }
+              }
+
+              // Instruction tree — top-level + inner instructions
+              const innerIxMap = new Map<number, Array<{ programIdIndex: number; accounts: number[]; data: string }>>();
+              if (tx.meta?.innerInstructions) {
+                for (const inner of tx.meta.innerInstructions) {
+                  innerIxMap.set(inner.index, inner.instructions as Array<{ programIdIndex: number; accounts: number[]; data: string }>);
+                }
+              }
+              const instructions: InstructionInfo[] = (msg.instructions ?? []).map((ix: { programIdIndex: number; accounts?: number[]; data?: string }, ixIdx: number) => {
+                const innerIxs = innerIxMap.get(ixIdx);
+                return {
+                  programId: accountKeys[ix.programIdIndex] ?? '',
+                  accounts: (ix.accounts ?? []).map((aIdx: number) => accountKeys[aIdx] ?? `?${aIdx}`),
+                  dataBase58: ix.data ?? '',
+                  innerInstructions: innerIxs?.map((iix) => ({
+                    programId: accountKeys[iix.programIdIndex] ?? '',
+                    accounts: (iix.accounts ?? []).map((aIdx: number) => accountKeys[aIdx] ?? `?${aIdx}`),
+                    dataBase58: iix.data ?? '',
+                  })),
+                };
+              });
+
+              // Log messages + error
+              const logMessages: string[] = (tx.meta?.logMessages as string[] | undefined) ?? [];
+              const errorMsg = tx.meta?.err ? JSON.stringify(tx.meta.err) : null;
+
               totalFees += fee;
               if (success) successCount++;
               totalCU += cu;
@@ -400,6 +544,17 @@ export function useRecentBlocks(count: number = 10) {
                 jitoTip,
                 feePayer,
                 solMovement,
+                txIndex: transactions.length,
+                accountCount,
+                lutCount,
+                cuRequested,
+                cuPrice,
+                priorityFee,
+                balanceChanges,
+                tokenBalanceChanges,
+                instructions,
+                logMessages,
+                errorMsg,
               });
             }
           }

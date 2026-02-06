@@ -22,6 +22,7 @@ import {
   CATEGORY_COLORS,
 } from './hooks/useSolanaData';
 import type { SlotData, LeaderScheduleInfo, ValidatorMetadata, EpochNetworkStats, EnhancedTransaction } from './hooks/useSolanaData';
+import type { TransactionInfo } from './hooks/useSolanaData';
 import { fetchEnhancedTransactions } from './hooks/useSolanaData';
 
 // Generate a gradient color based on pubkey for avatar fallback
@@ -582,14 +583,6 @@ function formatTimeRemaining(seconds: number): string {
 }
 
 // CU Distribution analysis
-interface TransactionInfo {
-  signature: string;
-  success: boolean;
-  fee: number;
-  computeUnits: number;
-  slot: number;
-}
-
 const CU_CATEGORIES = [
   { name: 'Micro', range: '< 5k', min: 0, max: 5000, color: 'var(--text-tertiary)', description: 'Simple transfers, memo' },
   { name: 'Light', range: '5k-50k', min: 5000, max: 50000, color: 'var(--accent-tertiary)', description: 'Token transfers, basic ops' },
@@ -2089,6 +2082,12 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
   const [pausedBlocks, setPausedBlocks] = useState<SlotData[]>([]);
   const [enhancedTxMap, setEnhancedTxMap] = useState<Map<string, EnhancedTransaction>>(new Map());
   const enhancedFetchedSlotRef = useRef<number | null>(null);
+  const [txPage, setTxPage] = useState(0);
+  const [txSortKey, setTxSortKey] = useState<string>('txIndex');
+  const [txSortAsc, setTxSortAsc] = useState(true);
+  const [failedOnly, setFailedOnly] = useState(false);
+  const [selectedTx, setSelectedTx] = useState<number | null>(null);
+  const TX_PAGE_SIZE = 25;
 
   // Use paused blocks when paused, otherwise live blocks
   const displayBlocks = isPaused ? pausedBlocks : blocks;
@@ -2278,6 +2277,87 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
     return { success, failed, jito, vote, totalCU, totalFees, topCategories };
   }, [txsForChart]);
 
+  // Fee by position — 20 buckets of non-vote txs, average priority fee + jito tip per bucket
+  const feeByPosition = useMemo(() => {
+    if (!selectedBlock?.transactions) return null;
+    const nonVoteTxs = selectedBlock.transactions.filter(
+      tx => !tx.programs.includes('Vote111111111111111111111111111111111111111')
+    );
+    if (nonVoteTxs.length === 0) return null;
+    const BUCKETS = 20;
+    const bucketSize = Math.ceil(nonVoteTxs.length / BUCKETS);
+    const buckets: { start: number; end: number; avgPriority: number; avgJito: number; count: number }[] = [];
+    let maxVal = 0;
+    for (let b = 0; b < BUCKETS; b++) {
+      const start = b * bucketSize;
+      const end = Math.min(start + bucketSize, nonVoteTxs.length);
+      if (start >= nonVoteTxs.length) break;
+      const slice = nonVoteTxs.slice(start, end);
+      const avgPriority = slice.reduce((s, tx) => s + tx.priorityFee, 0) / slice.length;
+      const avgJito = slice.reduce((s, tx) => s + tx.jitoTip, 0) / slice.length;
+      const total = avgPriority + avgJito;
+      if (total > maxVal) maxVal = total;
+      buckets.push({ start: start + 1, end, avgPriority, avgJito, count: slice.length });
+    }
+    return { buckets, maxVal };
+  }, [selectedBlock]);
+
+  // Per-block program breakdown — top 15 programs by tx count (non-vote, excludes ComputeBudget)
+  const programBreakdown = useMemo(() => {
+    if (!selectedBlock?.transactions) return null;
+    const COMPUTE_BUDGET_ID = 'ComputeBudget111111111111111111111111111111';
+    const VOTE_ID = 'Vote111111111111111111111111111111111111111';
+    const nonVoteTxs = selectedBlock.transactions.filter(tx => !tx.programs.includes(VOTE_ID));
+    const programMap = new Map<string, { count: number; cu: number; fees: number }>();
+    for (const tx of nonVoteTxs) {
+      for (const pid of tx.programs) {
+        if (pid === COMPUTE_BUDGET_ID || pid === VOTE_ID) continue;
+        const entry = programMap.get(pid) || { count: 0, cu: 0, fees: 0 };
+        entry.count++;
+        entry.cu += tx.computeUnits;
+        entry.fees += tx.fee;
+        programMap.set(pid, entry);
+      }
+    }
+    const sorted = Array.from(programMap.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 15);
+    const maxCount = sorted.length > 0 ? sorted[0][1].count : 1;
+    return { programs: sorted, maxCount, totalNonVote: nonVoteTxs.length };
+  }, [selectedBlock]);
+
+  // Paginated + sorted transaction list
+  const { paginatedTxs, filteredTxCount, txTotalPages } = useMemo(() => {
+    if (!selectedBlock?.transactions) return { paginatedTxs: [], filteredTxCount: 0, txTotalPages: 0 };
+    const VOTE_ID = 'Vote111111111111111111111111111111111111111';
+    let filtered = selectedBlock.transactions.filter(tx => {
+      if (!showVotes && tx.programs.includes(VOTE_ID)) return false;
+      if (failedOnly && tx.success) return false;
+      return true;
+    });
+    // Sort
+    filtered = [...filtered].sort((a, b) => {
+      let va: number, vb: number;
+      switch (txSortKey) {
+        case 'txIndex': va = a.txIndex; vb = b.txIndex; break;
+        case 'fee': va = a.fee; vb = b.fee; break;
+        case 'priorityFee': va = a.priorityFee; vb = b.priorityFee; break;
+        case 'jitoTip': va = a.jitoTip; vb = b.jitoTip; break;
+        case 'computeUnits': va = a.computeUnits; vb = b.computeUnits; break;
+        case 'cuRequested': va = a.cuRequested; vb = b.cuRequested; break;
+        case 'accountCount': va = a.accountCount; vb = b.accountCount; break;
+        case 'success': va = a.success ? 1 : 0; vb = b.success ? 1 : 0; break;
+        default: va = a.txIndex; vb = b.txIndex;
+      }
+      return txSortAsc ? va - vb : vb - va;
+    });
+    const total = filtered.length;
+    const pages = Math.ceil(total / TX_PAGE_SIZE);
+    const safePage = Math.min(txPage, Math.max(0, pages - 1));
+    const start = safePage * TX_PAGE_SIZE;
+    return { paginatedTxs: filtered.slice(start, start + TX_PAGE_SIZE), filteredTxCount: total, txTotalPages: pages };
+  }, [selectedBlock, showVotes, failedOnly, txSortKey, txSortAsc, txPage]);
+
   if (!selectedBlock || !analysis || !blockStats) {
     return (
       <section id="deepdive" className="mb-10">
@@ -2298,6 +2378,25 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
     if (cat === 'vote') return '#6b7280';
     return CATEGORY_COLORS[cat] || '#22c55e';
   };
+
+  // Sort column toggle — reset page on change
+  const handleTxSort = (key: string) => {
+    if (txSortKey === key) {
+      setTxSortAsc(!txSortAsc);
+    } else {
+      setTxSortKey(key);
+      setTxSortAsc(key === 'txIndex');
+    }
+    setTxPage(0);
+  };
+  const SortHeader = ({ label, sortKey, className = '' }: { label: string; sortKey: string; className?: string }) => (
+    <th
+      className={`px-2 py-2 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--text-secondary)] select-none whitespace-nowrap ${className}`}
+      onClick={() => handleTxSort(sortKey)}
+    >
+      {label} {txSortKey === sortKey ? (txSortAsc ? '↑' : '↓') : ''}
+    </th>
+  );
 
   return (
     <section id="deepdive" className="mb-10">
@@ -2365,7 +2464,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             return (
               <button
                 key={block.slot}
-                onClick={() => setSelectedSlot(block.slot)}
+                onClick={() => { setSelectedSlot(block.slot); setSelectedTx(null); }}
                 className={`relative group transition-all duration-200 ${
                   isSelected ? 'z-10' : ''
                 }`}
@@ -2752,36 +2851,36 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                 const groupSize = totalTxs > 500 ? 10 : totalTxs > 200 ? 5 : 3;
                 const isAlternateGroup = Math.floor(i / groupSize) % 2 === 1;
 
+                const isSelected = selectedTx === i;
+
                 return (
-                  <a
+                  <div
                     key={tx.signature}
-                    href={getSolscanUrl('tx', tx.signature)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`relative transition-all duration-100 ${
+                    className={`relative transition-all duration-100 cursor-pointer ${
                       isHovered ? 'z-20' : ''
                     }`}
                     style={{
                       height: `${Math.max(2, heightPercent)}%`,
                       backgroundColor: color,
-                      opacity: isHovered ? 1 : isAlternateGroup ? 0.7 : 0.9,
+                      opacity: isSelected ? 1 : isHovered ? 1 : isAlternateGroup ? 0.7 : 0.9,
                       transform: isHovered ? 'scaleY(1.1) scaleX(1.5)' : 'scaleY(1)',
                       transformOrigin: 'bottom center',
                       borderRadius: txsForChart.length < 100 ? '2px 2px 0 0' : '1px 1px 0 0',
                       minWidth: '1px',
                       borderRight: totalTxs <= 300 ? '0.5px solid var(--bg-secondary)' : 'none',
+                      outline: isSelected ? '2px solid var(--accent)' : 'none',
+                      outlineOffset: '1px',
                     }}
+                    onClick={(e) => { e.preventDefault(); setSelectedTx(isSelected ? null : i); }}
                     onMouseEnter={() => setHoveredTx(i)}
                     onMouseLeave={() => setHoveredTx(null)}
                   >
-                    {/* Compact hover tooltip */}
+                    {/* Hover tooltip — quick preview */}
                     {isHovered && (() => {
-                      const baseFee = (tx.numSignatures || 1) * 5000;
-                      const priorityFee = Math.max(0, tx.fee - baseFee);
                       const enhanced = enhancedTxMap.get(tx.signature);
                       return (
                         <div
-                          className={`absolute z-50 pointer-events-none`}
+                          className="absolute z-50 pointer-events-none"
                           style={{
                             bottom: '100%',
                             marginBottom: '4px',
@@ -2791,10 +2890,11 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                             ...((!isLeftEdge && !isRightEdge) ? { left: '50%' } : {}),
                           }}
                         >
-                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-medium text-[var(--text-primary)]">#{i + 1}</span>
-                              <span className={`px-1 rounded text-[8px] ${
+                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl text-[9px]" style={{ minWidth: '260px', maxWidth: '320px', whiteSpace: 'normal' }}>
+                            {/* Row 1: Position, Status, Type */}
+                            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                              <span className="font-mono font-bold text-[var(--text-primary)]">#{i + 1}</span>
+                              <span className={`px-1 rounded text-[8px] font-medium ${
                                 tx.success ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--error)]/20 text-[var(--error)]'
                               }`}>{tx.success ? 'OK' : 'FAIL'}</span>
                               {enhanced ? (
@@ -2806,29 +2906,77 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                                 <span className="text-[var(--text-secondary)] capitalize">{category}</span>
                               )}
                             </div>
+                            {/* Helius description */}
                             {enhanced?.description && (
-                              <div className="text-[8px] text-[var(--text-secondary)] mb-1 max-w-[250px] whitespace-normal leading-tight">
-                                {enhanced.description.length > 100 ? enhanced.description.slice(0, 100) + '...' : enhanced.description}
+                              <div className="text-[8px] text-[var(--text-secondary)] mb-1.5 leading-tight">
+                                {enhanced.description.length > 120 ? enhanced.description.slice(0, 120) + '...' : enhanced.description}
                               </div>
                             )}
-                            <div className="space-y-0.5 text-[var(--text-muted)]">
+                            {/* Error message for failed txs */}
+                            {!tx.success && tx.errorMsg && (
+                              <div className="text-[8px] text-[var(--error)] bg-[var(--error)]/10 rounded px-1.5 py-0.5 mb-1.5 font-mono truncate">{tx.errorMsg.length > 80 ? tx.errorMsg.slice(0, 80) + '...' : tx.errorMsg}</div>
+                            )}
+                            {/* Programs row */}
+                            {(() => {
+                              const VOTE_ID = 'Vote111111111111111111111111111111111111111';
+                              const CB_ID = 'ComputeBudget111111111111111111111111111111';
+                              const progs = tx.programs.filter(p => p !== VOTE_ID && p !== CB_ID);
+                              if (progs.length === 0) return null;
+                              return (
+                                <div className="flex flex-wrap gap-1 mb-1.5">
+                                  {progs.slice(0, 4).map(pid => {
+                                    const p = getProgramInfo(pid);
+                                    return <span key={pid} className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)]" style={{ color: p.color }}>{p.name}</span>;
+                                  })}
+                                  {progs.length > 4 && <span className="text-[8px] text-[var(--text-muted)]">+{progs.length - 4}</span>}
+                                </div>
+                              );
+                            })()}
+                            {/* Stats grid */}
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
                               <div>Fee <span className="font-mono text-[var(--text-primary)] ml-1">{tx.fee.toLocaleString()}</span> L</div>
-                              <div>Priority <span className="font-mono text-[var(--accent)] ml-1">{priorityFee.toLocaleString()}</span> L</div>
+                              <div>CU <span className="font-mono text-[var(--text-secondary)] ml-1">{formatCU(tx.computeUnits)}<span className="text-[var(--text-tertiary)]">/{formatCU(tx.cuRequested)}</span></span></div>
+                              <div>Priority <span className="font-mono text-[var(--accent)] ml-1">{tx.priorityFee.toLocaleString()}</span> L</div>
+                              <div>Accts <span className="font-mono text-[var(--text-secondary)] ml-1">{tx.accountCount}{tx.lutCount > 0 ? <span className="text-[var(--accent-secondary)]"> +{tx.lutCount}LUT</span> : ''}</span></div>
                               {tx.jitoTip > 0 && <div>Jito <span className="font-mono text-[var(--accent-tertiary)] ml-1">{tx.jitoTip.toLocaleString()}</span> L</div>}
-                              <div>CU <span className="font-mono text-[var(--text-secondary)] ml-1">{formatCU(tx.computeUnits)}</span></div>
-                              {/* SOL movement */}
-                              {Math.abs(tx.solMovement) > 0 && (
-                                <div>SOL <span className="font-mono text-[var(--accent-secondary)] ml-1">{(Math.abs(tx.solMovement) / 1e9).toFixed(4)}</span></div>
-                              )}
+                              {tx.cuPrice > 0 && <div>Price <span className="font-mono text-[var(--text-secondary)] ml-1">{tx.cuPrice.toLocaleString()}</span> µL</div>}
                             </div>
-                            <div className="mt-1 pt-1 border-t border-[var(--border-primary)] text-[8px] text-[var(--text-tertiary)] font-mono">
-                              {tx.signature.slice(0, 10)}...
+                            {/* Balance changes preview */}
+                            {tx.balanceChanges.length > 0 && (
+                              <div className="mt-1.5 pt-1.5 border-t border-[var(--border-primary)]">
+                                <div className="text-[8px] text-[var(--text-muted)] uppercase mb-0.5">SOL Changes</div>
+                                {tx.balanceChanges.slice(0, 3).map((bc, j) => (
+                                  <div key={j} className="flex items-center justify-between text-[8px]">
+                                    <span className="font-mono text-[var(--text-tertiary)] truncate" style={{ maxWidth: '100px' }}>{bc.account.slice(0, 6)}...{bc.account.slice(-4)}</span>
+                                    <span className={`font-mono ${bc.change > 0 ? 'text-[var(--success)]' : 'text-[var(--error)]'}`}>{bc.change > 0 ? '+' : ''}{(bc.change / 1e9).toFixed(4)} SOL</span>
+                                  </div>
+                                ))}
+                                {tx.balanceChanges.length > 3 && <div className="text-[8px] text-[var(--text-muted)]">+{tx.balanceChanges.length - 3} more</div>}
+                              </div>
+                            )}
+                            {/* Token changes preview */}
+                            {tx.tokenBalanceChanges.length > 0 && (
+                              <div className="mt-1 pt-1 border-t border-[var(--border-primary)]">
+                                <div className="text-[8px] text-[var(--text-muted)] uppercase mb-0.5">Token Changes</div>
+                                {tx.tokenBalanceChanges.slice(0, 2).map((tc, j) => (
+                                  <div key={j} className="flex items-center justify-between text-[8px]">
+                                    <span className="font-mono text-[var(--text-tertiary)] truncate" style={{ maxWidth: '80px' }}>{tc.mint.slice(0, 6)}...</span>
+                                    <span className={`font-mono ${tc.change > 0 ? 'text-[var(--success)]' : 'text-[var(--error)]'}`}>{tc.change > 0 ? '+' : ''}{(tc.change / Math.pow(10, tc.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                                  </div>
+                                ))}
+                                {tx.tokenBalanceChanges.length > 2 && <div className="text-[8px] text-[var(--text-muted)]">+{tx.tokenBalanceChanges.length - 2} more</div>}
+                              </div>
+                            )}
+                            {/* Footer */}
+                            <div className="mt-1.5 pt-1 border-t border-[var(--border-primary)] flex items-center justify-between">
+                              <span className="text-[8px] text-[var(--text-tertiary)] font-mono">{tx.signature.slice(0, 10)}...</span>
+                              <span className="text-[8px] text-[var(--accent)]/70">click to expand</span>
                             </div>
                           </div>
                         </div>
                       );
                     })()}
-                  </a>
+                  </div>
                 );
               })}
             </div>
@@ -2865,6 +3013,539 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             })}
           </div>
         )}
+
+        {/* Selected Transaction Breakdown Panel */}
+        {selectedTx !== null && txsForChart[selectedTx] && (() => {
+          const tx = txsForChart[selectedTx];
+          const enhanced = enhancedTxMap.get(tx.signature);
+          const category = getTxCategory(tx.programs);
+          const VOTE_ID = 'Vote111111111111111111111111111111111111111';
+          const COMPUTE_BUDGET_ID = 'ComputeBudget111111111111111111111111111111';
+          const displayPrograms = tx.programs.filter(p => p !== VOTE_ID && p !== COMPUTE_BUDGET_ID);
+          const cuEfficiency = tx.cuRequested > 0 ? ((tx.computeUnits / tx.cuRequested) * 100) : 0;
+          const cuWasted = Math.max(0, tx.cuRequested - tx.computeUnits);
+          const baseFee = (tx.numSignatures || 1) * 5000;
+          const totalCost = tx.fee + tx.jitoTip;
+
+          return (
+            <div className="mt-3 pt-3 border-t-2 border-[var(--accent)]/30">
+              {/* Header row */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-[var(--text-primary)]">TX #{selectedTx + 1}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                    tx.success ? 'bg-[var(--success)]/15 text-[var(--success)]' : 'bg-[var(--error)]/15 text-[var(--error)]'
+                  }`}>{tx.success ? 'Success' : 'Failed'}</span>
+                  {enhanced ? (
+                    <>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] font-medium">{enhanced.type?.replace(/_/g, ' ')}</span>
+                      {enhanced.source && <span className="text-[9px] text-[var(--text-tertiary)]">via {enhanced.source}</span>}
+                    </>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] capitalize">{category}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={getSolscanUrl('tx', tx.signature)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] px-2.5 py-1 rounded-md bg-[var(--accent-secondary)]/10 text-[var(--accent-secondary)] hover:bg-[var(--accent-secondary)]/20 transition-colors font-medium"
+                  >
+                    View on Solscan
+                  </a>
+                  <button
+                    onClick={() => setSelectedTx(null)}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] text-sm px-1 py-0.5 rounded hover:bg-[var(--bg-tertiary)]"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Helius description */}
+              {enhanced?.description && (
+                <div className="text-[10px] text-[var(--text-secondary)] mb-3 leading-relaxed bg-[var(--bg-tertiary)] rounded-lg px-3 py-2 border border-[var(--border-primary)]">
+                  {enhanced.description}
+                </div>
+              )}
+
+              {/* Two-column layout: left = fees & costs, right = compute & accounts */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                {/* Left: Fee Breakdown */}
+                <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Fee Breakdown</div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">Base Fee</span>
+                      <span className="font-mono text-[10px] text-[var(--text-secondary)]">{baseFee.toLocaleString()} L</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">Priority Fee</span>
+                      <span className="font-mono text-[10px] text-[var(--accent)]">{tx.priorityFee.toLocaleString()} L</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">Jito Tip</span>
+                      <span className="font-mono text-[10px] text-[var(--accent-tertiary)]">{tx.jitoTip > 0 ? `${tx.jitoTip.toLocaleString()} L` : '—'}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">CU Price</span>
+                      <span className="font-mono text-[10px] text-[var(--text-secondary)]">{tx.cuPrice > 0 ? `${tx.cuPrice.toLocaleString()} µL/CU` : '—'}</span>
+                    </div>
+                    {/* Fee composition mini-bar */}
+                    <div className="pt-1.5 border-t border-[var(--border-primary)]">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[9px] text-[var(--text-muted)]">Total Cost</span>
+                        <span className="font-mono text-xs text-[var(--text-primary)] font-medium">{totalCost.toLocaleString()} L <span className="text-[9px] text-[var(--text-tertiary)]">({(totalCost / 1e9).toFixed(6)} SOL)</span></span>
+                      </div>
+                      <div className="h-2 rounded-full overflow-hidden flex bg-[var(--bg-tertiary)]">
+                        {totalCost > 0 && (
+                          <>
+                            <div className="h-full bg-[var(--text-muted)]" style={{ width: `${(baseFee / totalCost) * 100}%` }} title={`Base: ${((baseFee / totalCost) * 100).toFixed(1)}%`} />
+                            <div className="h-full bg-[var(--accent)]" style={{ width: `${(tx.priorityFee / totalCost) * 100}%` }} title={`Priority: ${((tx.priorityFee / totalCost) * 100).toFixed(1)}%`} />
+                            {tx.jitoTip > 0 && <div className="h-full bg-[var(--accent-tertiary)]" style={{ width: `${(tx.jitoTip / totalCost) * 100}%` }} title={`Jito: ${((tx.jitoTip / totalCost) * 100).toFixed(1)}%`} />}
+                          </>
+                        )}
+                      </div>
+                      <div className="flex gap-3 mt-1 text-[8px]">
+                        <span className="text-[var(--text-muted)]">Base</span>
+                        <span className="text-[var(--accent)]">Priority</span>
+                        {tx.jitoTip > 0 && <span className="text-[var(--accent-tertiary)]">Jito</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Compute & Accounts */}
+                <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Compute & Accounts</div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">CU Used</span>
+                      <span className="font-mono text-[10px] text-[var(--text-primary)]">{formatCU(tx.computeUnits)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">CU Requested</span>
+                      <span className="font-mono text-[10px] text-[var(--text-secondary)]">{formatCU(tx.cuRequested)}</span>
+                    </div>
+                    {/* CU efficiency bar */}
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-[10px] text-[var(--text-muted)]">Efficiency</span>
+                      <div className="flex items-center gap-1.5 flex-1 justify-end">
+                        <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden w-16">
+                          <div className="h-full rounded-full" style={{
+                            width: `${Math.min(100, cuEfficiency)}%`,
+                            backgroundColor: cuEfficiency > 80 ? 'var(--success)' : cuEfficiency > 50 ? 'var(--warning)' : 'var(--error)',
+                          }} />
+                        </div>
+                        <span className={`font-mono text-[10px] ${cuEfficiency > 80 ? 'text-[var(--success)]' : cuEfficiency > 50 ? 'text-[var(--warning)]' : 'text-[var(--error)]'}`}>{cuEfficiency.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">CU Wasted</span>
+                      <span className="font-mono text-[10px] text-[var(--text-tertiary)]">{formatCU(cuWasted)}</span>
+                    </div>
+                    <div className="pt-1.5 border-t border-[var(--border-primary)]">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-[var(--text-muted)]">Accounts</span>
+                        <span className="font-mono text-[10px] text-[var(--text-primary)]">{tx.accountCount}{tx.lutCount > 0 && <span className="text-[var(--accent-secondary)]"> ({tx.lutCount} via LUT)</span>}</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">Signatures</span>
+                      <span className="font-mono text-[10px] text-[var(--text-secondary)]">{tx.numSignatures}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[var(--text-muted)]">SOL Movement</span>
+                      <span className="font-mono text-[10px] text-[var(--accent-secondary)]">{Math.abs(tx.solMovement) > 0 ? `${(Math.abs(tx.solMovement) / 1e9).toFixed(6)} SOL` : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Signature + Fee Payer row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3 text-[10px]">
+                <div className="bg-[var(--bg-secondary)]/30 rounded px-3 py-1.5 border border-[var(--border-primary)]">
+                  <span className="text-[var(--text-muted)]">Signature </span>
+                  <span className="font-mono text-[var(--text-tertiary)] break-all">{tx.signature}</span>
+                </div>
+                <div className="bg-[var(--bg-secondary)]/30 rounded px-3 py-1.5 border border-[var(--border-primary)]">
+                  <span className="text-[var(--text-muted)]">Fee Payer </span>
+                  <a href={getSolscanUrl('account', tx.feePayer)} target="_blank" rel="noopener noreferrer" className="font-mono text-[var(--accent-secondary)] hover:underline break-all">{tx.feePayer}</a>
+                </div>
+              </div>
+
+              {/* Error message */}
+              {!tx.success && tx.errorMsg && (
+                <div className="mb-3 bg-[var(--error)]/10 border border-[var(--error)]/20 rounded-lg px-3 py-2">
+                  <div className="text-[9px] text-[var(--error)] uppercase tracking-wider mb-1 font-semibold">Error</div>
+                  <div className="font-mono text-[10px] text-[var(--error)] break-all">{tx.errorMsg}</div>
+                </div>
+              )}
+
+              {/* Programs */}
+              {displayPrograms.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-1.5 font-semibold">Programs ({displayPrograms.length})</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {displayPrograms.map(pid => {
+                      const pInfo = getProgramInfo(pid);
+                      return (
+                        <a
+                          key={pid}
+                          href={getSolscanUrl('account', pid)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border-primary)] hover:border-[var(--text-muted)] transition-colors"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: pInfo.color }} />
+                          <span className="text-[10px]" style={{ color: pInfo.color }}>{pInfo.name}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Balance Changes + Token Changes — side by side */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                {/* SOL Balance Changes */}
+                {tx.balanceChanges.length > 0 && (
+                  <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">SOL Balance Changes ({tx.balanceChanges.length})</div>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {tx.balanceChanges.map((bc, j) => (
+                        <div key={j} className="flex items-center justify-between text-[10px] py-0.5">
+                          <a href={getSolscanUrl('account', bc.account)} target="_blank" rel="noopener noreferrer" className="font-mono text-[var(--accent-secondary)] hover:underline truncate" style={{ maxWidth: '140px' }} title={bc.account}>{bc.account.slice(0, 6)}...{bc.account.slice(-4)}</a>
+                          <div className="flex items-center gap-2 font-mono text-[9px]">
+                            <span className="text-[var(--text-tertiary)]">{(bc.before / 1e9).toFixed(4)}</span>
+                            <span className="text-[var(--text-muted)]">{'->'}</span>
+                            <span className="text-[var(--text-secondary)]">{(bc.after / 1e9).toFixed(4)}</span>
+                            <span className={`font-medium ${bc.change > 0 ? 'text-[var(--success)]' : 'text-[var(--error)]'}`}>{bc.change > 0 ? '+' : ''}{(bc.change / 1e9).toFixed(4)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Token Balance Changes */}
+                {tx.tokenBalanceChanges.length > 0 && (
+                  <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Token Balance Changes ({tx.tokenBalanceChanges.length})</div>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {tx.tokenBalanceChanges.map((tc, j) => {
+                        const divisor = Math.pow(10, tc.decimals);
+                        return (
+                          <div key={j} className="flex items-center justify-between text-[10px] py-0.5">
+                            <div className="truncate" style={{ maxWidth: '120px' }}>
+                              <a href={getSolscanUrl('account', tc.mint)} target="_blank" rel="noopener noreferrer" className="font-mono text-[var(--accent)] hover:underline text-[9px]" title={tc.mint}>{tc.mint.slice(0, 6)}...</a>
+                            </div>
+                            <div className="flex items-center gap-2 font-mono text-[9px]">
+                              <span className="text-[var(--text-tertiary)]">{(tc.before / divisor).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                              <span className="text-[var(--text-muted)]">{'->'}</span>
+                              <span className="text-[var(--text-secondary)]">{(tc.after / divisor).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                              <span className={`font-medium ${tc.change > 0 ? 'text-[var(--success)]' : 'text-[var(--error)]'}`}>{tc.change > 0 ? '+' : ''}{(tc.change / divisor).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Instruction Tree */}
+              {tx.instructions.length > 0 && (
+                <div className="mb-3 bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Instructions ({tx.instructions.length})</div>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {tx.instructions.map((ix, ixIdx) => {
+                      const pInfo = getProgramInfo(ix.programId);
+                      const innerCount = ix.innerInstructions?.length ?? 0;
+                      return (
+                        <div key={ixIdx}>
+                          <div className="flex items-center gap-1.5 text-[10px]">
+                            <span className="font-mono text-[var(--text-muted)] w-4 text-right shrink-0">{ixIdx}</span>
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: pInfo.color }} />
+                            <a href={getSolscanUrl('account', ix.programId)} target="_blank" rel="noopener noreferrer" className="hover:underline font-medium" style={{ color: pInfo.color }}>{pInfo.name}</a>
+                            <span className="text-[var(--text-tertiary)] text-[9px]">{ix.accounts.length} accounts</span>
+                            {ix.dataBase58 && <span className="text-[var(--text-muted)] text-[8px] font-mono">data:{ix.dataBase58.length > 12 ? ix.dataBase58.slice(0, 12) + '...' : ix.dataBase58}</span>}
+                            {innerCount > 0 && <span className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-muted)]">{innerCount} inner</span>}
+                          </div>
+                          {/* Inner instructions */}
+                          {ix.innerInstructions && ix.innerInstructions.length > 0 && (
+                            <div className="ml-6 mt-0.5 space-y-0.5 border-l border-[var(--border-primary)] pl-2">
+                              {ix.innerInstructions.slice(0, 8).map((iix, iIdx) => {
+                                const iPInfo = getProgramInfo(iix.programId);
+                                return (
+                                  <div key={iIdx} className="flex items-center gap-1.5 text-[9px]">
+                                    <span className="font-mono text-[var(--text-muted)] w-5 text-right shrink-0">{ixIdx}.{iIdx}</span>
+                                    <span className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: iPInfo.color }} />
+                                    <span style={{ color: iPInfo.color }}>{iPInfo.name}</span>
+                                    <span className="text-[var(--text-tertiary)] text-[8px]">{iix.accounts.length} accts</span>
+                                  </div>
+                                );
+                              })}
+                              {ix.innerInstructions.length > 8 && <div className="text-[8px] text-[var(--text-muted)] ml-6">+{ix.innerInstructions.length - 8} more inner instructions</div>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Program Logs */}
+              {tx.logMessages.length > 0 && (
+                <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Program Logs ({tx.logMessages.length})</div>
+                  <div className="max-h-40 overflow-y-auto font-mono text-[9px] space-y-0.5">
+                    {tx.logMessages.map((log, lIdx) => {
+                      const isInvoke = log.startsWith('Program ') && log.includes(' invoke');
+                      const isSuccess = log.includes('success');
+                      const isFailed = log.includes('failed') || log.includes('error') || log.includes('Error');
+                      const isConsumed = log.includes('consumed');
+                      return (
+                        <div key={lIdx} className={`py-0.5 ${
+                          isInvoke ? 'text-[var(--accent)]' :
+                          isSuccess ? 'text-[var(--success)]' :
+                          isFailed ? 'text-[var(--error)]' :
+                          isConsumed ? 'text-[var(--warning)]' :
+                          'text-[var(--text-tertiary)]'
+                        }`}>{log}</div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Fee by Position + Program Breakdown — 2-column grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 mb-4">
+        {/* Fee by Position */}
+        <div className="card p-4">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 font-semibold">Fee by Position</div>
+          {feeByPosition && feeByPosition.buckets.length > 0 ? (
+            <>
+              <div className="space-y-1">
+                {feeByPosition.buckets.map((bucket, i) => {
+                  const total = bucket.avgPriority + bucket.avgJito;
+                  const widthPct = feeByPosition.maxVal > 0 ? (total / feeByPosition.maxVal) * 100 : 0;
+                  const priorityPct = total > 0 ? (bucket.avgPriority / total) * 100 : 0;
+                  return (
+                    <div key={i} className="flex items-center gap-2 group">
+                      <span className="text-[9px] font-mono text-[var(--text-muted)] w-12 text-right shrink-0">{bucket.start}–{bucket.end}</span>
+                      <div className="flex-1 h-3 bg-[var(--bg-tertiary)] rounded-sm overflow-hidden relative">
+                        <div className="h-full flex rounded-sm overflow-hidden" style={{ width: `${Math.max(widthPct, 1)}%` }}>
+                          <div className="h-full bg-[var(--accent)]" style={{ width: `${priorityPct}%` }} />
+                          <div className="h-full bg-[var(--accent-tertiary)]" style={{ width: `${100 - priorityPct}%` }} />
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono text-[var(--text-tertiary)] w-16 text-right shrink-0">{formatNumber(Math.round(total))} L</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-4 mt-2 pt-2 border-t border-[var(--border-primary)] text-[9px]">
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-sm bg-[var(--accent)]" />
+                  <span className="text-[var(--text-muted)]">Priority Fee</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-sm bg-[var(--accent-tertiary)]" />
+                  <span className="text-[var(--text-muted)]">Jito Tip</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-[var(--text-muted)] text-center py-4">No non-vote transactions</div>
+          )}
+        </div>
+
+        {/* Program Breakdown */}
+        <div className="card p-4">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 font-semibold">Program Breakdown</div>
+          {programBreakdown && programBreakdown.programs.length > 0 ? (
+            <div className="space-y-1.5">
+              {programBreakdown.programs.map(([pid, data]) => {
+                const info = getProgramInfo(pid);
+                const pct = programBreakdown.totalNonVote > 0 ? (data.count / programBreakdown.totalNonVote) * 100 : 0;
+                const barPct = (data.count / programBreakdown.maxCount) * 100;
+                return (
+                  <div key={pid} className="flex items-center gap-2 group">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: info.color }} />
+                    <a
+                      href={getSolscanUrl('account', pid)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent-secondary)] truncate w-24 shrink-0"
+                      title={pid}
+                    >
+                      {info.name}
+                    </a>
+                    <div className="flex-1 h-2.5 bg-[var(--bg-tertiary)] rounded-sm overflow-hidden">
+                      <div className="h-full rounded-sm transition-all" style={{ width: `${barPct}%`, backgroundColor: info.color, opacity: 0.7 }} />
+                    </div>
+                    <span className="text-[9px] font-mono text-[var(--text-secondary)] w-8 text-right shrink-0">{data.count}</span>
+                    <span className="text-[9px] font-mono text-[var(--text-tertiary)] w-10 text-right shrink-0">{pct.toFixed(1)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-xs text-[var(--text-muted)] text-center py-4">No program data</div>
+          )}
+        </div>
+      </div>
+
+      {/* Transaction Table */}
+      <div className="card overflow-hidden mt-4">
+        {/* Table header bar */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/30">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">Transactions</span>
+            <button
+              onClick={() => { setFailedOnly(!failedOnly); setTxPage(0); }}
+              className={`px-2 py-1 text-[10px] rounded-md border transition-all ${
+                failedOnly
+                  ? 'bg-[var(--error)]/15 text-[var(--error)] border-[var(--error)]/30'
+                  : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] border-[var(--border-primary)] hover:border-[var(--text-muted)]'
+              }`}
+            >
+              Failed only
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {filteredTxCount > 0 ? `${txPage * TX_PAGE_SIZE + 1}–${Math.min((txPage + 1) * TX_PAGE_SIZE, filteredTxCount)} of ${filteredTxCount.toLocaleString()}` : '0 results'}
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setTxPage(0)}
+                disabled={txPage === 0}
+                className="px-1.5 py-0.5 text-[10px] rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                ««
+              </button>
+              <button
+                onClick={() => setTxPage(p => Math.max(0, p - 1))}
+                disabled={txPage === 0}
+                className="px-1.5 py-0.5 text-[10px] rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                «
+              </button>
+              <span className="px-1.5 text-[10px] font-mono text-[var(--text-tertiary)]">{txPage + 1}/{Math.max(1, txTotalPages)}</span>
+              <button
+                onClick={() => setTxPage(p => Math.min(txTotalPages - 1, p + 1))}
+                disabled={txPage >= txTotalPages - 1}
+                className="px-1.5 py-0.5 text-[10px] rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                »
+              </button>
+              <button
+                onClick={() => setTxPage(txTotalPages - 1)}
+                disabled={txPage >= txTotalPages - 1}
+                className="px-1.5 py-0.5 text-[10px] rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                »»
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/20">
+                <SortHeader label="#" sortKey="txIndex" className="text-right w-12" />
+                <th className="px-2 py-2 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Signature</th>
+                <SortHeader label="Status" sortKey="success" />
+                <th className="px-2 py-2 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Type</th>
+                <th className="px-2 py-2 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Programs</th>
+                <SortHeader label="Fee (L)" sortKey="fee" className="text-right" />
+                <SortHeader label="Priority (L)" sortKey="priorityFee" className="text-right" />
+                <SortHeader label="Tip (L)" sortKey="jitoTip" className="text-right" />
+                <SortHeader label="CU Used" sortKey="computeUnits" className="text-right" />
+                <SortHeader label="CU Req" sortKey="cuRequested" className="text-right" />
+                <SortHeader label="Accts" sortKey="accountCount" className="text-right" />
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedTxs.map((tx) => {
+                const enhanced = enhancedTxMap.get(tx.signature);
+                const category = getTxCategory(tx.programs);
+                const VOTE_ID = 'Vote111111111111111111111111111111111111111';
+                const COMPUTE_BUDGET_ID = 'ComputeBudget111111111111111111111111111111';
+                const displayPrograms = tx.programs.filter(p => p !== VOTE_ID && p !== COMPUTE_BUDGET_ID);
+                const cuEfficiency = tx.cuRequested > 0 ? ((tx.computeUnits / tx.cuRequested) * 100) : 0;
+                return (
+                  <tr
+                    key={tx.signature}
+                    className="border-b border-[var(--border-primary)]/50 hover:bg-[var(--bg-secondary)]/40 cursor-pointer transition-colors"
+                    onClick={() => window.open(getSolscanUrl('tx', tx.signature), '_blank')}
+                  >
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-muted)] text-right">{tx.txIndex + 1}</td>
+                    <td className="px-2 py-1.5">
+                      <span className="text-[10px] font-mono text-[var(--accent-secondary)] hover:underline">{tx.signature.slice(0, 8)}...{tx.signature.slice(-4)}</span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                        tx.success ? 'bg-[var(--success)]/15 text-[var(--success)]' : 'bg-[var(--error)]/15 text-[var(--error)]'
+                      }`}>{tx.success ? 'OK' : 'FAIL'}</span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {enhanced ? (
+                        <span className="text-[10px] text-[var(--accent)] truncate block max-w-[100px]" title={enhanced.type || ''}>{enhanced.type?.replace(/_/g, ' ') || category}</span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--text-secondary)] capitalize">{category}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {displayPrograms.slice(0, 3).map(pid => {
+                          const pInfo = getProgramInfo(pid);
+                          return (
+                            <span key={pid} className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] whitespace-nowrap" style={{ color: pInfo.color }}>{pInfo.name}</span>
+                          );
+                        })}
+                        {displayPrograms.length > 3 && <span className="text-[8px] text-[var(--text-muted)]">+{displayPrograms.length - 3}</span>}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-secondary)] text-right">{tx.fee.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-right">
+                      <span className={tx.priorityFee > 0 ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}>{tx.priorityFee.toLocaleString()}</span>
+                    </td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-right">
+                      <span className={tx.jitoTip > 0 ? 'text-[var(--accent-tertiary)]' : 'text-[var(--text-muted)]'}>{tx.jitoTip > 0 ? tx.jitoTip.toLocaleString() : '—'}</span>
+                    </td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-secondary)] text-right">
+                      {formatCU(tx.computeUnits)}
+                      {tx.cuRequested !== 200000 && <span className="text-[8px] text-[var(--text-tertiary)] ml-0.5">({cuEfficiency.toFixed(0)}%)</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-tertiary)] text-right">{formatCU(tx.cuRequested)}</td>
+                    <td className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-tertiary)] text-right">
+                      {tx.accountCount}
+                      {tx.lutCount > 0 && <span className="text-[var(--accent-secondary)] ml-0.5">+{tx.lutCount}L</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {paginatedTxs.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="px-4 py-6 text-center text-xs text-[var(--text-muted)]">
+                    {failedOnly ? 'No failed transactions in this block' : 'No transactions to display'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
