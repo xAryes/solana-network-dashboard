@@ -67,3 +67,54 @@
 **Context**: Default Vercel URL was `solana-network-dashboard.vercel.app` — too long.
 **Decision**: Rename Vercel project to `solwatch` → `solwatch.vercel.app`. Updated in README and CLAUDE.md.
 **Rationale**: Matches the sol.watch branding. Shorter, cleaner URL.
+
+## 2026-02-06: Analytics Cards — Hero Metric Layout
+**Context**: Fee Analysis and CU Efficiency cards used dense grids of small numbers that were hard to scan at a glance.
+**Decision**: Redesign with hero metric pattern: one large number (total SOL fees / avg CU fill %) with supporting context, then progress bars and stacked distribution bars below.
+**Rationale**: At-a-glance readability. The most important number is immediately visible. Stacked bars replace horizontal bar lists — more compact and more intuitive for proportion display. Fee percentiles become inline chips instead of a 5-column grid.
+**Alternatives**: Keep grid layout with bigger fonts (still not scannable), use external chart library (adds bundle size).
+
+## 2026-02-06: Error Type Tracking in Failure Accumulation
+**Context**: Failures page showed program failure rates and top wallets, but not *why* transactions failed.
+**Decision**: Add `accErrorTypesRef` to parse error types from `tx.errorMsg` JSON. Parse `InstructionError[1]` for the specific error name, fall back to top-level key or raw string.
+**Rationale**: "Custom" (program-specific) vs runtime errors (InsufficientFundsForFee, InvalidAccountData) gives users actionable insight into failure causes.
+
+## 2026-02-06: Session Failure Trend — SVG Area Chart
+**Context**: Failure rate was shown as a single number. No visibility into whether it's improving or worsening over time.
+**Decision**: Add time-series snapshots (1/sec, max 120) tracking per-batch failure rates. Render as SVG area chart with average reference line, cumulative rate, and live dot.
+**Rationale**: Gives users a visual sense of failure rate trends during their session. Pure CSS/SVG, no chart library. Snapshots are cheap (just 4 numbers per entry).
+
+## 2026-02-06: Tooltip Backgrounds → bg-black
+**Context**: Tooltips used `bg-[var(--bg-primary)]/95` which resolves to semi-transparent #000000 — but with backdrop-blur, the underlying content could bleed through inconsistently depending on what's behind the tooltip.
+**Decision**: Replace with `bg-black/95` (or `bg-black` without alpha) for all tooltip backgrounds across the app.
+**Rationale**: Solid black gives consistent contrast and readability. Applied to epoch tooltips, TX visualization tooltips, fee-by-position tooltips, and validator health tooltips.
+
+## 2026-02-06: Epoch Links → Solscan
+**Context**: Epoch numbers in analytics linked to `solanacompass.com/epochs/{epoch}`.
+**Decision**: Change to `solscan.io/epoch/{epoch}`.
+**Rationale**: Solscan has richer epoch detail pages with transaction breakdowns, validator info, and fee analysis. More useful destination for users wanting to drill deeper.
+
+## 2026-02-06: Failures Page — Remove Epoch Selector, Simplify to Current Epoch
+**Context**: Programs table had ‹/› epoch navigator + epoch context strip with stats + mini bar navigator for browsing historical epochs. User found this overcomplicated.
+**Decision**: Remove epoch selector entirely. "vs Epoch" column now compares each program's failure rate against the current epoch's network-wide rate only. Removed `selectedEpochIdx` state, `epochCorrelation` useMemo, and the mini epoch bar navigator.
+**Rationale**: Users care about how programs compare to the *current* network baseline, not historical epochs. Simpler UI, less state, fewer lines of code.
+
+## 2026-02-06: Failures Page — Remove Volume Chart and Composition Chart
+**Context**: Two charts were added then rejected by the user: "Failure Composition by category per block group" (stacked bars showing dex/perps/core etc per batch of blocks) and "Failed Transactions by Epoch (volume)" (bar chart of absolute failure counts per epoch).
+**Decision**: Remove both. The area chart showing failure *rate* by epoch is sufficient for historical context.
+**Rationale**: User explicitly said both were "not interesting." Rate trends are more actionable than raw volume, and category composition per block group was too granular to be useful.
+
+## 2026-02-06: Context Descriptions on All Sections
+**Context**: Users landing on the dashboard had no explanation of what each chart/card shows.
+**Decision**: Add a brief descriptive subtitle to every section header and card title across all 4 pages (16+ descriptions total).
+**Rationale**: Onboarding and clarity. Each description is 1-2 sentences explaining what the data means and why it matters. Helps both new users and returning users who forgot what a metric represents.
+
+## 2026-02-06: Interactive Fee-by-Position Chart
+**Context**: Fee-by-position chart in Block Explorer was view-only with hover tooltips.
+**Decision**: Make bars clickable. Clicking a bar shows a summary panel below the chart with: avg priority fee, avg Jito tip, total fees (SOL), avg CU, success rate, and top programs in that section as colored pill badges.
+**Rationale**: Transforms a visual-only chart into an analytical tool. Users can see which block positions have the most MEV activity, failures, or program concentration. State resets when switching blocks.
+
+## 2026-02-06: Explorer Card Alignment with flex-col + mt-auto
+**Context**: Fee Distribution and TX Compute Distribution stacked bars in the 2-column Explorer analytics layout were misaligned vertically because the content above them differed in height.
+**Decision**: Both cards use `flex flex-col`, inner content uses `flex flex-col flex-1 gap-3`, and the bottom stacked bar gets `mt-auto` to push it to the card bottom.
+**Rationale**: Standard CSS flexbox pattern. Ensures bars align regardless of different content heights above them.

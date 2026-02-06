@@ -101,6 +101,9 @@ function App() {
   const accProgramFailuresRef = useRef<Map<string, number>>(new Map());
   const accProgramTotalsRef = useRef<Map<string, number>>(new Map());
   const accPayerFailuresRef = useRef<Map<string, number>>(new Map());
+  const accErrorTypesRef = useRef<Map<string, number>>(new Map());
+  const accFailureSnapshotsRef = useRef<Array<{ time: number; rate: number; failed: number; total: number }>>([]);
+  const accTotalFailedRef = useRef(0);
   const accTotalBlocksRef = useRef(0);
   const accTotalTxsRef = useRef(0);
   const sessionStartRef = useRef<string>(new Date().toLocaleTimeString());
@@ -108,13 +111,17 @@ function App() {
 
   // Accumulate failure data across block refreshes (session-persistent)
   useEffect(() => {
+    let batchFailed = 0;
+    let batchTotal = 0;
     for (const block of blocks) {
       if (!block.transactions || processedSlotsRef.current.has(block.slot)) continue;
       processedSlotsRef.current.add(block.slot);
       accTotalBlocksRef.current++;
 
+
       for (const tx of block.transactions) {
         accTotalTxsRef.current++;
+        batchTotal++;
         for (const prog of tx.programs) {
           const info = getProgramInfo(prog);
           if (info.category !== 'core') {
@@ -122,6 +129,30 @@ function App() {
           }
         }
         if (!tx.success) {
+          accTotalFailedRef.current++;
+          batchFailed++;
+          // Track error type
+          if (tx.errorMsg) {
+            let errorType = 'Unknown';
+            try {
+              const parsed = JSON.parse(tx.errorMsg);
+              if (parsed && typeof parsed === 'object') {
+                if (parsed.InstructionError) {
+                  const errDetail = parsed.InstructionError[1];
+                  if (typeof errDetail === 'string') {
+                    errorType = errDetail;
+                  } else if (errDetail && typeof errDetail === 'object') {
+                    errorType = Object.keys(errDetail)[0] || 'Custom';
+                  }
+                } else {
+                  errorType = Object.keys(parsed)[0] || 'Unknown';
+                }
+              } else if (typeof parsed === 'string') {
+                errorType = parsed;
+              }
+            } catch { errorType = tx.errorMsg.slice(0, 30); }
+            accErrorTypesRef.current.set(errorType, (accErrorTypesRef.current.get(errorType) || 0) + 1);
+          }
           for (const prog of tx.programs) {
             const info = getProgramInfo(prog);
             if (info.category !== 'core') {
@@ -132,6 +163,16 @@ function App() {
             accPayerFailuresRef.current.set(tx.feePayer, (accPayerFailuresRef.current.get(tx.feePayer) || 0) + 1);
           }
         }
+      }
+    }
+    // Add snapshot for trend tracking (throttled to max 1 per second)
+    if (batchTotal > 0) {
+      const snaps = accFailureSnapshotsRef.current;
+      const now = Date.now();
+      if (snaps.length === 0 || now - snaps[snaps.length - 1].time > 1000) {
+        snaps.push({ time: now, rate: batchTotal > 0 ? (batchFailed / batchTotal) * 100 : 0, failed: accTotalFailedRef.current, total: accTotalTxsRef.current });
+        // Keep max 120 snapshots (~4 min at 2s refresh)
+        if (snaps.length > 120) snaps.shift();
       }
     }
     setFailureRefreshCounter(c => c + 1);
@@ -151,9 +192,17 @@ function App() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8);
 
+    const totalFailed = accTotalFailedRef.current;
+    const errorTypes = Array.from(accErrorTypesRef.current.entries())
+      .map(([type, count]) => ({ type, count, pct: totalFailed > 0 ? (count / totalFailed) * 100 : 0 }))
+      .sort((a, b) => b.count - a.count);
+
     return {
       programRates,
       topPayers,
+      errorTypes,
+      snapshots: [...accFailureSnapshotsRef.current],
+      totalFailed,
       totalBlocks: accTotalBlocksRef.current,
       totalTxs: accTotalTxsRef.current,
       sessionStart: sessionStartRef.current,
@@ -198,7 +247,7 @@ function App() {
   return (
     <div className="min-h-screen bg-[var(--bg-primary)]">
       {/* Header */}
-      <header className="border-b border-[var(--border-primary)]/50 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-[var(--bg-primary)]/70 backdrop-blur-xl z-30" style={{ WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
+      <header className="border-b border-[var(--border-primary)]/50 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-black/70 backdrop-blur-xl z-30" style={{ WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
           {/* Left side */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -262,7 +311,7 @@ function App() {
 
       {/* Mobile Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 z-20 md:hidden">
-        <div className="bg-[var(--bg-primary)]/95 backdrop-blur-md border-t border-[var(--border-primary)]">
+        <div className="bg-black/95 backdrop-blur-md border-t border-[var(--border-primary)]">
           <div className="flex items-center justify-around px-2 py-2">
             {PAGES.map(page => (
               <NavLink
@@ -421,7 +470,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
     <>
       {/* Network Overview */}
       <section className="mb-8 sm:mb-10">
-        <SectionHeader title="Network Overview" />
+        <SectionHeader title="Network Overview" subtitle="Real-time Solana mainnet metrics — slot height, throughput, and epoch timing" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Current Slot" value={stats.currentSlot.toLocaleString()} subtext="live" accent />
           <StatCard label="Block Height" value={stats.blockHeight.toLocaleString()} subtext="cumulative" />
@@ -456,6 +505,9 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
                   {stats.epochInfo.slotIndex.toLocaleString()} / {stats.epochInfo.slotsInEpoch.toLocaleString()} slots
                 </span>
               </div>
+              <div className="text-[10px] text-[var(--text-tertiary)] mb-2">
+                An epoch is ~2-3 days. Validators earn rewards and stake changes take effect at epoch boundaries.
+              </div>
               <div className="h-2 sm:h-2.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-[var(--accent)] rounded-full progress-animated transition-all duration-500"
@@ -484,7 +536,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
 
       {/* Validators & Network */}
       <section className="mb-8 sm:mb-10">
-        <SectionHeader title="Validators & Network" />
+        <SectionHeader title="Validators & Network" subtitle="Current validator set and block production stats for this epoch" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard
             label="Active Validators"
@@ -523,7 +575,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
 
       {/* Supply & Economics */}
       <section className="mb-8 sm:mb-10">
-        <SectionHeader title="Supply & Economics" />
+        <SectionHeader title="Supply & Economics" subtitle="SOL supply distribution and current inflation parameters" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Total Supply" value={supply ? formatNumber(supply.total) : '—'} subtext="SOL total" accent />
           <StatCard label="Circulating" value={supply ? formatNumber(supply.circulating) : '—'} subtext="SOL in circulation" />
@@ -551,7 +603,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
 
       {/* Leader Rotation */}
       <section className="mb-8 sm:mb-10">
-        <SectionHeader title="Leader Rotation" subtitle="Upcoming block producers" />
+        <SectionHeader title="Leader Rotation" subtitle="Which validator is producing the current block and who's next — updates every slot (~400ms)" />
         <LeaderSchedulePanel
           leaderSchedule={leaderSchedule}
           currentSlot={stats.currentSlot}
@@ -585,6 +637,9 @@ function ExplorerPage({ blocks, transactions, getValidatorName, networkHistory }
 type FailureAccumulation = {
   programRates: Array<{ prog: string; failCount: number; total: number; rate: number }>;
   topPayers: Array<[string, number]>;
+  errorTypes: Array<{ type: string; count: number; pct: number }>;
+  snapshots: Array<{ time: number; rate: number; failed: number; total: number }>;
+  totalFailed: number;
   totalBlocks: number;
   totalTxs: number;
   sessionStart: string;
@@ -898,7 +953,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
   if (data.error || !data.currentEpoch) {
     return (
       <section className="mb-10">
-        <SectionHeader title="Epoch Analytics" subtitle="Historical network data" />
+        <SectionHeader title="Epoch Analytics" subtitle="Historical network performance data from Solana Compass" />
         <div className="card p-6 text-center py-8">
           <div className="text-[var(--text-muted)]">Unable to load historical data</div>
         </div>
@@ -924,7 +979,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
     return (
       <tr className={`border-b border-[var(--border-primary)] table-row-hover ${isCurrent ? 'bg-[var(--accent)]/5' : ''} ${isSearch ? 'bg-[var(--accent-secondary)]/5' : ''}`}>
         <td className="py-2 pr-3 font-mono whitespace-nowrap">
-          <a href={`https://solanacompass.com/epochs/${epoch.epoch}`} target="_blank" rel="noopener noreferrer" className={`hover:underline ${isCurrent ? 'text-[var(--accent)] font-medium' : isSearch ? 'text-[var(--accent-secondary)] font-medium' : 'text-[var(--text-secondary)] hover:text-[var(--accent-secondary)]'}`}>
+          <a href={`https://solscan.io/epoch/${epoch.epoch}`} target="_blank" rel="noopener noreferrer" className={`hover:underline ${isCurrent ? 'text-[var(--accent)] font-medium' : isSearch ? 'text-[var(--accent-secondary)] font-medium' : 'text-[var(--text-secondary)] hover:text-[var(--accent-secondary)]'}`}>
             {epoch.epoch}
           </a>
           {isCurrent && <span className="text-[10px] text-[var(--text-muted)] ml-1">(live)</span>}
@@ -970,34 +1025,37 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
             const chartData = data.slice(-CHART_EPOCHS);
             const maxVal = Math.max(...chartData.map(getValue));
             return (
-              <div className="flex gap-[2px] mt-auto pt-2" style={{ height: '40px' }}>
+              <div className="relative flex gap-[2px] mt-auto pt-2" style={{ height: '40px' }}>
                 {chartData.map((e, i) => {
                   const val = getValue(e);
                   const color = getColor ? getColor(e) : (accentColor || 'var(--text-tertiary)');
                   const isCurrent = i === chartData.length - 1;
                   const heightPct = maxVal > 0 ? (val / maxVal) * 100 : 0;
                   return (
-                    <div key={e.epoch} className="flex-1 flex flex-col items-center group relative cursor-default" style={{ minWidth: 0 }}>
+                    <div key={e.epoch} className="flex-1 flex flex-col items-center group cursor-default" style={{ minWidth: 0 }}>
                       {isCurrent && <div className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0 mb-0.5" style={{ backgroundColor: color }} />}
                       <div className="w-full flex-1 flex items-end rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
                         <div className="w-full rounded-sm transition-all duration-300" style={{ height: `${Math.max(heightPct, 3)}%`, background: color, opacity: isCurrent ? 0.9 : 0.3 + (i / chartData.length) * 0.6 }} />
                       </div>
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                        <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
-                          <div className="font-medium text-[var(--text-primary)] mb-0.5">Epoch {e.epoch}{isCurrent ? ' (current)' : ''}</div>
-                          <div className="text-[var(--text-muted)] mb-1.5">{formatEpochDate(e.startedAt)}</div>
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
-                            <span>TXs</span><span className="font-mono text-[var(--text-primary)] text-right">{formatCompact(e.totalTransactions)}</span>
-                            <span>User TXs</span><span className="font-mono text-[var(--text-secondary)] text-right">{formatCompact(e.nonVoteTransactions)}</span>
-                            <span>Failed</span><span className="font-mono text-[var(--error)] text-right">{formatCompact(e.failedTx)} ({(100 - e.successRate).toFixed(1)}%)</span>
-                            <span>Success</span><span className="font-mono text-[var(--success)] text-right">{e.successRate.toFixed(1)}%</span>
-                            <span className="pt-0.5 border-t border-[var(--border-primary)]">Fees</span><span className="font-mono text-[var(--accent)] text-right pt-0.5 border-t border-[var(--border-primary)]">{formatSOL(e.totalFees)} SOL</span>
-                            <span>Base</span><span className="font-mono text-[var(--text-tertiary)] text-right">{formatSOL(e.baseFees)}</span>
-                            <span>Priority</span><span className="font-mono text-[var(--accent)] text-right">{formatSOL(e.priorityFees)}</span>
-                            <span>Jito tips</span><span className="font-mono text-[var(--accent-tertiary)] text-right">{formatSOL(e.jitoTips)}</span>
-                            <span className="pt-0.5 border-t border-[var(--border-primary)]">CU fill</span><span className="font-mono text-right pt-0.5 border-t border-[var(--border-primary)]" style={{ color: (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100) > 60 ? 'var(--warning)' : 'var(--success)' }}>{(e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100).toFixed(1)}%</span>
-                            <span>Skip rate</span><span className="font-mono text-[var(--text-tertiary)] text-right">{e.skipRate.toFixed(2)}%</span>
-                            <span>Block time</span><span className="font-mono text-[var(--text-secondary)] text-right">{e.avgBlockTime.toFixed(0)}ms</span>
+                      {/* Tooltip — positioned full-width relative to chart container */}
+                      <div className="absolute bottom-full left-0 right-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
+                        <div className="bg-black border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-2xl text-[8px] font-mono">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-semibold text-[var(--text-primary)] text-[9px]">E{e.epoch}{isCurrent ? '*' : ''}</span>
+                            <span className="text-[var(--text-muted)] text-[9px] font-sans">{formatEpochDate(e.startedAt)}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
+                            <span><span className="text-[var(--text-primary)]">{formatCompact(e.totalTransactions)}</span> tx</span>
+                            <span><span className="text-[var(--text-secondary)]">{formatCompact(e.nonVoteTransactions)}</span> user</span>
+                            <span><span className="text-[var(--error)]">{formatCompact(e.failedTx)}</span> fail <span className="text-[var(--error)]">({(100 - e.successRate).toFixed(1)}%)</span></span>
+                            <span><span className="text-[var(--success)]">{e.successRate.toFixed(1)}%</span> ok</span>
+                            <span><span className="text-[var(--accent)]">{formatSOL(e.totalFees)}</span> fees</span>
+                            <span><span className="text-[var(--text-tertiary)]">{formatSOL(e.baseFees)}</span> base</span>
+                            <span><span className="text-[var(--accent)]">{formatSOL(e.priorityFees)}</span> pri</span>
+                            <span><span className="text-[var(--accent-tertiary)]">{formatSOL(e.jitoTips)}</span> jito</span>
+                            <span><span style={{ color: (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100) > 60 ? 'var(--warning)' : 'var(--success)' }}>{(e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100).toFixed(1)}%</span> cu</span>
+                            <span><span className="text-[var(--text-tertiary)]">{e.skipRate.toFixed(2)}%</span> skip</span>
+                            <span><span className="text-[var(--text-secondary)]">{e.avgBlockTime.toFixed(0)}ms</span> blk</span>
                           </div>
                         </div>
                       </div>
@@ -1267,7 +1325,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
 
   return (
     <section className="mb-8 sm:mb-10">
-      <SectionHeader title="Epoch Deep Dive" subtitle={`Epoch ${current.epoch} • Compute & Fees by Epoch`} />
+      <SectionHeader title="Epoch Deep Dive" subtitle={`Epoch ${current.epoch} — Compute usage, fee trends, and MEV activity across epochs. Data from Solana Compass.`} />
 
       <div className="grid lg:grid-cols-2 gap-4 mb-4">
         {/* Fee Trend by Epoch */}
@@ -1291,7 +1349,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
               const isCurrent = e.epoch === current.epoch;
               return (
                 <div key={e.epoch} className={`flex items-center gap-2 text-[10px] group cursor-default relative ${isCurrent ? '' : 'opacity-70 hover:opacity-100'}`}>
-                  <a href={`https://solanacompass.com/epochs/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
+                  <a href={`https://solscan.io/epoch/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
                   <div className="flex-1 h-5 flex rounded overflow-hidden bg-[var(--bg-tertiary)]" style={{ maxWidth: `${(eTotal / maxEpochFees) * 100}%` }}>
                     <div className="h-full" style={{ width: `${eTotal > 0 ? (e.baseFees / eTotal) * 100 : 0}%`, background: 'var(--text-tertiary)' }} />
                     <div className="h-full" style={{ width: `${eTotal > 0 ? (e.priorityFees / eTotal) * 100 : 0}%`, background: 'var(--accent)' }} />
@@ -1300,7 +1358,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
                   <span className="font-mono w-12 text-right flex-shrink-0 text-[var(--text-muted)]">{formatSOL(eTotal)}</span>
                   {/* Tooltip */}
                   <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
-                    <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                    <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
                       <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
                         <span>Base fees</span><span className="font-mono text-[var(--text-tertiary)] text-right">{formatSOL(e.baseFees)} SOL ({eTotal > 0 ? ((e.baseFees / eTotal) * 100).toFixed(0) : 0}%)</span>
@@ -1342,7 +1400,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
               const isCurrent = e.epoch === current.epoch;
               return (
                 <div key={e.epoch} className={`flex items-center gap-2 text-[10px] group cursor-default relative ${isCurrent ? '' : 'opacity-70 hover:opacity-100'}`}>
-                  <a href={`https://solanacompass.com/epochs/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
+                  <a href={`https://solscan.io/epoch/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
                   <div className="flex-1 h-5 rounded overflow-hidden bg-[var(--bg-tertiary)]">
                     <div className="h-full rounded" style={{ width: `${fillPct}%`, background: fillPct > 60 ? 'var(--warning)' : 'var(--success)', opacity: 0.8 }} />
                   </div>
@@ -1350,7 +1408,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
                   <span className="font-mono w-11 text-right flex-shrink-0 text-[var(--text-muted)]">{packedPct.toFixed(0)}% pk</span>
                   {/* Tooltip */}
                   <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
-                    <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                    <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
                       <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
                         <span>CU fill</span><span className="font-mono text-right" style={{ color: fillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{fillPct.toFixed(1)}%</span>
@@ -1386,17 +1444,30 @@ function AnalyticsSection({
   blocks: SlotData[];
   transactions: TransactionInfo[];
 }) {
+  // Format lamports for readability: 5000 → "5k", 1234567 → "1.23M"
+  const fmtL = (lamports: number) => {
+    if (lamports >= 1e9) return `${(lamports / 1e9).toFixed(1)}B`;
+    if (lamports >= 1e6) return `${(lamports / 1e6).toFixed(2)}M`;
+    if (lamports >= 1e3) return `${(lamports / 1e3).toFixed(lamports >= 1e4 ? 0 : 1)}k`;
+    return lamports.toLocaleString();
+  };
+
   const feeStats = useMemo(() => {
     if (transactions.length === 0) return null;
     const fees = transactions.map(tx => tx.fee);
     const sorted = [...fees].sort((a, b) => a - b);
     const total = fees.reduce((a, b) => a + b, 0);
+    const priorityFees = fees.filter(f => f > 5000);
+    const avgPriority = priorityFees.length > 0 ? priorityFees.reduce((a, b) => a + b, 0) / priorityFees.length : 0;
     return {
-      total: total / 1e9,
-      avg: (total / fees.length) / 1e9,
-      median: sorted[Math.floor(sorted.length / 2)] / 1e9,
-      min: sorted[0] / 1e9,
-      max: sorted[sorted.length - 1] / 1e9,
+      totalSOL: total / 1e9,
+      avgLamports: total / fees.length,
+      medianLamports: sorted[Math.floor(sorted.length / 2)],
+      minLamports: sorted[0],
+      maxLamports: sorted[sorted.length - 1],
+      avgPriorityLamports: avgPriority,
+      priorityCount: priorityFees.length,
+      baseOnlyCount: fees.length - priorityFees.length,
       count: fees.length,
     };
   }, [transactions]);
@@ -1406,7 +1477,7 @@ function AnalyticsSection({
     const cuUsages = blocks.map(b => (b.totalCU || 0) / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100);
     const avgCU = cuUsages.reduce((a, b) => a + b, 0) / cuUsages.length;
     const avgTx = blocks.reduce((s, b) => s + b.txCount, 0) / blocks.length;
-    return { avgCU, maxCU: Math.max(...cuUsages), avgTx };
+    return { avgCU, maxCU: Math.max(...cuUsages), avgTx, cuUsages };
   }, [blocks]);
 
   const cuDistribution = useMemo(() => {
@@ -1425,30 +1496,31 @@ function AnalyticsSection({
     const baseFee = 5000;
     const buckets = [
       { name: 'Base Only', max: baseFee * 1.1, count: 0, color: '#6b7280', desc: '5,000 L' },
-      { name: 'Low', max: baseFee * 2, count: 0, color: '#4ade80', desc: '<10k L' },
-      { name: 'Medium', max: baseFee * 10, count: 0, color: '#60a5fa', desc: '<50k L' },
-      { name: 'High', max: baseFee * 100, count: 0, color: '#f59e0b', desc: '<500k L' },
-      { name: 'Urgent', max: Infinity, count: 0, color: '#ef4444', desc: '500k+ L' },
+      { name: 'Low', max: baseFee * 2, count: 0, color: '#4ade80', desc: '5k–10k' },
+      { name: 'Medium', max: baseFee * 10, count: 0, color: '#60a5fa', desc: '10k–50k' },
+      { name: 'High', max: baseFee * 100, count: 0, color: '#f59e0b', desc: '50k–500k' },
+      { name: 'Urgent', max: Infinity, count: 0, color: '#ef4444', desc: '500k+' },
     ];
     for (const tx of transactions) {
       for (const b of buckets) { if (tx.fee <= b.max) { b.count++; break; } }
     }
-    return { p25: p(25) / 1e9, p50: p(50) / 1e9, p75: p(75) / 1e9, p90: p(90) / 1e9, p99: p(99) / 1e9, buckets };
+    return { p25: p(25), p50: p(50), p75: p(75), p90: p(90), p99: p(99), buckets };
   }, [transactions]);
 
   const estimatedSeconds = blocks.length * 0.4;
 
   return (
     <section id="analytics" className="mb-10">
-      <SectionHeader title="Real-Time Analytics" subtitle={`Last ${blocks.length} blocks • ${transactions.length.toLocaleString()} transactions • ~${estimatedSeconds.toFixed(0)}s of activity`} />
+      <SectionHeader title="Real-Time Analytics" subtitle={`Analyzing the last ${blocks.length} blocks (${transactions.length.toLocaleString()} txs, ~${estimatedSeconds.toFixed(0)}s of activity). Data refreshes with each new block.`} />
 
       <div className="grid lg:grid-cols-2 gap-4">
-        {/* Card 1: Fee Analysis + TX Patterns */}
-        <div className="card p-4">
+        {/* Card 1: Fee Analysis */}
+        <div className="card p-4 flex flex-col">
           <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
             Fee Analysis
           </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Transaction fee breakdown across recent blocks. Priority fees = above base 5,000 lamports, indicating urgency or MEV activity.</div>
 
           {!feeStats && (
             <div className="flex items-center justify-center py-8 gap-2 text-sm text-[var(--text-muted)]">
@@ -1456,130 +1528,123 @@ function AnalyticsSection({
               Loading fee data...
             </div>
           )}
-          {feeStats && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
+          {feeStats && feePercentiles && (
+            <div className="flex flex-col flex-1 gap-3">
+              {/* Hero: Total fees + fee per TX */}
+              <div className="flex items-end justify-between">
                 <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Total Fees <span className="text-[var(--text-tertiary)]">(sum)</span></div>
-                  <div className="font-mono text-sm text-[var(--accent)]">{feeStats.total.toFixed(4)} <span className="text-[9px] text-[var(--text-muted)]">SOL</span></div>
+                  <div className="font-mono text-2xl font-semibold text-[var(--accent)]">
+                    {feeStats.totalSOL.toFixed(4)} <span className="text-sm text-[var(--text-muted)]">SOL</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-tertiary)] mt-0.5">
+                    total fees across {feeStats.count.toLocaleString()} txs
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Avg Fee <span className="text-[var(--text-tertiary)]">(per tx)</span></div>
-                  <div className="font-mono text-sm text-[var(--text-secondary)]">{feeStats.avg.toFixed(6)}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Median Fee <span className="text-[var(--text-tertiary)]">(p50)</span></div>
-                  <div className="font-mono text-sm text-[var(--text-secondary)]">{feeStats.median.toFixed(6)}</div>
+                <div className="text-right">
+                  <div className="font-mono text-sm text-[var(--text-secondary)]">{fmtL(feeStats.avgLamports)}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">avg / tx</div>
                 </div>
               </div>
 
-              {/* Fee range */}
+              {/* Priority adoption bar */}
               <div>
-                <div className="flex justify-between text-[9px] text-[var(--text-muted)] mb-0.5">
-                  <span>{feeStats.min.toFixed(6)}</span>
-                  <span>{feeStats.max.toFixed(6)}</span>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] text-[var(--text-muted)]">Priority Fee Adoption</span>
+                  <span className="font-mono text-[11px] text-[var(--text-secondary)]">{(feeStats.priorityCount / feeStats.count * 100).toFixed(1)}%</span>
                 </div>
-                <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full relative">
-                  <div className="absolute h-full bg-[var(--accent)]/20 rounded-full w-full" />
-                  <div className="absolute h-full w-0.5 bg-[var(--accent)]" style={{ left: `${((feeStats.median - feeStats.min) / (feeStats.max - feeStats.min || 1)) * 100}%` }} title="Median" />
+                <div className="h-2 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500" style={{
+                    width: `${(feeStats.priorityCount / feeStats.count * 100)}%`,
+                    background: 'linear-gradient(90deg, var(--accent), var(--accent-secondary))',
+                  }} />
+                </div>
+                <div className="flex justify-between mt-1 text-[9px] text-[var(--text-tertiary)]">
+                  <span>{feeStats.priorityCount.toLocaleString()} priority (avg {fmtL(feeStats.avgPriorityLamports)} L)</span>
+                  <span>{feeStats.baseOnlyCount.toLocaleString()} base only</span>
                 </div>
               </div>
 
-              {/* Priority distribution */}
-              {feePercentiles && (
-                <div className="pt-2 border-t border-[var(--border-primary)]">
-                  <div className="flex gap-2 text-[10px] mb-2">
-                    {['p25', 'p50', 'p75', 'p90', 'p99'].map(k => (
-                      <div key={k} className="flex-1 bg-[var(--bg-secondary)] rounded px-1.5 py-1 text-center">
-                        <div className="text-[var(--text-muted)]">{k}</div>
-                        <div className="font-mono text-[var(--text-secondary)] text-[9px]">{(feePercentiles[k as keyof typeof feePercentiles] as number).toFixed(6)}</div>
+              {/* Fee distribution — stacked bar (pushed to bottom) */}
+              <div className="mt-auto">
+                <div className="text-[10px] text-[var(--text-muted)] mb-1.5">Fee Distribution</div>
+                <div className="h-7 rounded-lg overflow-hidden flex">
+                  {feePercentiles.buckets.map(b => {
+                    const pct = feeStats.count > 0 ? (b.count / feeStats.count) * 100 : 0;
+                    return pct > 0 ? (
+                      <div key={b.name} className="h-full flex items-center justify-center transition-all duration-300 first:rounded-l-lg last:rounded-r-lg" style={{ width: `${Math.max(pct, 1.5)}%`, backgroundColor: b.color, opacity: 0.85 }} title={`${b.name}: ${b.count.toLocaleString()} (${pct.toFixed(1)}%)`}>
+                        {pct > 6 && <span className="text-[9px] font-mono text-black/80 font-semibold">{pct.toFixed(0)}%</span>}
                       </div>
-                    ))}
-                  </div>
-                  <div className="space-y-1">
-                    {feePercentiles.buckets.map(b => {
-                      const pct = transactions.length > 0 ? (b.count / transactions.length) * 100 : 0;
-                      return (
-                        <div key={b.name} className="flex items-center gap-1.5 text-[10px]" title={`${b.name}: up to ${b.desc} (lamports)`}>
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.color }} />
-                          <span className="text-[var(--text-muted)] w-14">{b.name}</span>
-                          <span className="text-[var(--text-tertiary)] w-10 text-[9px]">{b.desc}</span>
-                          <div className="flex-1 h-1 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: b.color, opacity: 0.8 }} />
-                          </div>
-                          <span className="font-mono text-[var(--text-tertiary)] w-6 text-right">{b.count}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                    ) : null;
+                  })}
                 </div>
-              )}
-
+              </div>
             </div>
           )}
         </div>
 
-        {/* Card 2: CU Distribution + Block Efficiency */}
-        <div className="card p-4">
+        {/* Card 2: Compute & Block Efficiency */}
+        <div className="card p-4 flex flex-col">
           <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
             Compute & Block Efficiency
           </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">How full are blocks? CU fill shows compute capacity usage. Higher fill rates can lead to fee spikes and transaction delays.</div>
 
-          {/* CU distribution */}
           {cuDistribution.length === 0 && !blockEfficiency && (
             <div className="flex items-center justify-center py-8 gap-2 text-sm text-[var(--text-muted)]">
               <div className="spinner" style={{ width: 16, height: 16 }} />
               Loading block data...
             </div>
           )}
-          {cuDistribution.length > 0 && (
-            <div className="space-y-1.5 mb-4">
-              {cuDistribution.map(cat => (
-                <div key={cat.name} className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
-                  <span className="text-[10px] text-[var(--text-muted)] w-12">{cat.name}</span>
-                  <span className="text-[9px] text-[var(--text-tertiary)] w-12">{cat.range}</span>
-                  <div className="flex-1 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${cat.percent}%`, backgroundColor: cat.color }} />
-                  </div>
-                  <span className="text-[10px] font-mono text-[var(--text-tertiary)] w-12 text-right">{cat.count} <span className="text-[8px]">({cat.percent.toFixed(0)}%)</span></span>
-                </div>
-              ))}
-            </div>
-          )}
 
-          {/* Block efficiency */}
           {blockEfficiency && (
-            <div className="pt-3 border-t border-[var(--border-primary)]">
-              <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="flex flex-col flex-1 gap-3">
+              {/* Hero: CU Fill gauge */}
+              <div className="flex items-end justify-between">
                 <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Avg CU Fill <span className="text-[var(--text-tertiary)]">(per block)</span></div>
-                  <div className="font-mono text-sm text-[var(--accent-secondary)]">{blockEfficiency.avgCU.toFixed(1)}%</div>
+                  <div className="font-mono text-2xl font-semibold" style={{ color: blockEfficiency.avgCU > 60 ? 'var(--warning)' : blockEfficiency.avgCU > 40 ? 'var(--accent-secondary)' : 'var(--success)' }}>
+                    {blockEfficiency.avgCU.toFixed(1)}% <span className="text-sm text-[var(--text-muted)]">CU Fill</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-tertiary)] mt-0.5">
+                    avg compute utilization across {blocks.length} blocks
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Peak Fill <span className="text-[var(--text-tertiary)]">(max)</span></div>
-                  <div className="font-mono text-sm text-[var(--text-secondary)]">{blockEfficiency.maxCU.toFixed(1)}%</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-[var(--text-muted)]">Avg TX/Block <span className="text-[var(--text-tertiary)]">(mean)</span></div>
+                <div className="text-right">
                   <div className="font-mono text-sm text-[var(--text-secondary)]">{Math.round(blockEfficiency.avgTx)}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">tx / block</div>
                 </div>
               </div>
 
+              {/* CU capacity bar + stats */}
               <div>
-                <div className="flex justify-between text-[9px] text-[var(--text-muted)] mb-0.5">
-                  <span>Capacity Used</span>
-                  <span>{(100 - blockEfficiency.avgCU).toFixed(1)}% available</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-[var(--text-muted)]">Block CU Capacity</span>
+                  <span className="font-mono text-[10px] text-[var(--text-tertiary)]">peak {blockEfficiency.maxCU.toFixed(1)}%</span>
                 </div>
-                <div className="h-2.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                  <div className="h-full bg-[var(--accent-secondary)] rounded-full" style={{ width: `${blockEfficiency.avgCU}%` }} />
-                </div>
-                <div className="flex justify-between text-[9px] mt-0.5">
-                  <span className="text-[var(--accent-secondary)]">{formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT * blockEfficiency.avgCU / 100)}</span>
-                  <span className="text-[var(--text-muted)]">{formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT * (100 - blockEfficiency.avgCU) / 100)}</span>
+                <div className="h-2 rounded-full bg-[var(--bg-tertiary)] overflow-hidden relative">
+                  <div className="h-full rounded-full transition-all duration-500" style={{
+                    width: `${Math.min(blockEfficiency.avgCU, 100)}%`,
+                    background: blockEfficiency.avgCU > 60
+                      ? 'linear-gradient(90deg, var(--warning), var(--error))'
+                      : 'linear-gradient(90deg, var(--success), var(--accent-secondary))',
+                  }} />
+                  <div className="absolute top-0 bottom-0 w-px bg-white/40" style={{ left: `${Math.min(blockEfficiency.maxCU, 100)}%` }} title={`Peak: ${blockEfficiency.maxCU.toFixed(1)}%`} />
                 </div>
               </div>
+
+              {/* CU distribution — stacked bar (pushed to bottom) */}
+              {cuDistribution.length > 0 && (
+                <div className="mt-auto">
+                  <div className="text-[10px] text-[var(--text-muted)] mb-1.5">TX Compute Distribution</div>
+                  <div className="h-7 rounded-lg overflow-hidden flex">
+                    {cuDistribution.map(cat => cat.percent > 0 ? (
+                      <div key={cat.name} className="h-full flex items-center justify-center first:rounded-l-lg last:rounded-r-lg transition-all duration-300" style={{ width: `${Math.max(cat.percent, 1.5)}%`, backgroundColor: cat.color, opacity: 0.85 }} title={`${cat.name} (${cat.range}): ${cat.count.toLocaleString()} txs (${cat.percent.toFixed(1)}%)`}>
+                        {cat.percent > 6 && <span className="text-[9px] font-mono text-black/80 font-semibold">{cat.percent.toFixed(0)}%</span>}
+                      </div>
+                    ) : null)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1779,13 +1844,27 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
     let totalCU = 0;
     let totalFees = 0;
 
+    // Per-program CU waste
+    const programCUWaste = new Map<string, number>();
+    // Block position analysis (top/mid/bottom third)
+    const positionBuckets = [
+      { failed: 0, total: 0 },
+      { failed: 0, total: 0 },
+      { failed: 0, total: 0 },
+    ];
     for (const block of blocks) {
       if (!block.transactions) continue;
+
+      const txCount = block.transactions.length;
 
       for (const tx of block.transactions) {
         totalTxs++;
         totalCU += tx.computeUnits;
         totalFees += tx.fee;
+
+        // Block position tracking
+        const bucket = txCount > 2 ? Math.min(Math.floor((tx.txIndex / txCount) * 3), 2) : 1;
+        positionBuckets[bucket].total++;
 
         if (!tx.success) {
           totalFailed++;
@@ -1793,6 +1872,15 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
           wastedFees += tx.fee;
           const category = getTxCategory(tx.programs);
           failuresByCategory.set(category, (failuresByCategory.get(category) || 0) + 1);
+
+          // Position tracking for failed
+          positionBuckets[bucket].failed++;
+
+          // CU waste by primary program
+          if (tx.programs.length > 0) {
+            const primary = tx.programs[0];
+            programCUWaste.set(primary, (programCUWaste.get(primary) || 0) + tx.computeUnits);
+          }
 
           if (failedTxs.length < 15) {
             failedTxs.push({
@@ -1813,6 +1901,11 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
     const categoryBreakdown = Array.from(failuresByCategory.entries())
       .sort((a, b) => b[1] - a[1]);
 
+    const topCUWaste = Array.from(programCUWaste.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([prog, cu]) => ({ prog, cu }));
+
     return {
       failedTxs,
       totalFailed,
@@ -1823,6 +1916,8 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
       wastedFees,
       totalCU,
       totalFees,
+      topCUWaste,
+      positionBuckets,
     };
   }, [blocks]);
 
@@ -1852,11 +1947,12 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
     };
   }, [networkHistory]);
 
+  const [showWallets, setShowWallets] = useState(false);
 
   if (blocks.length === 0) {
     return (
       <section id="failures" className="mb-10">
-        <SectionHeader title="Failed Transactions" subtitle="Loading blocks..." />
+        <SectionHeader title="Failure Analysis" subtitle="Loading blocks..." />
         <div className="card p-8 flex items-center justify-center gap-3 text-[var(--text-muted)]">
           <div className="spinner" />
           <span>Fetching block data...</span>
@@ -1868,7 +1964,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
   if (analysis.totalFailed === 0) {
     return (
       <section id="failures" className="mb-10">
-        <SectionHeader title="Failed Transactions" subtitle={`Last ${blocks.length} blocks • ${analysis.totalTxs.toLocaleString()} total transactions`} />
+        <SectionHeader title="Failure Analysis" subtitle={`Last ${blocks.length} blocks • ${analysis.totalTxs.toLocaleString()} total transactions`} />
         <div className="card p-6 text-center">
           <div className="text-4xl mb-2">✓</div>
           <div className="text-[var(--success)] font-medium">No Failed Transactions</div>
@@ -1880,32 +1976,65 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
     );
   }
 
-  const slotRange = blocks.length > 0
-    ? { min: Math.min(...blocks.map(b => b.slot)), max: Math.max(...blocks.map(b => b.slot)) }
-    : null;
-
   return (
     <section id="failures" className="mb-10">
-      <SectionHeader title="Failed Transactions" subtitle={`Real-time analysis • ${analysis.totalTxs.toLocaleString()} transactions scanned`} />
+      <SectionHeader title="Failure Analysis" subtitle={`Monitoring ${blocks.length} recent blocks · ${analysis.totalTxs.toLocaleString()} transactions · refreshes every ~2s`} />
 
-      {/* Historical Baseline */}
+      {/* Hero Stats Strip */}
+      <div className="card p-4 mb-4 animate-section">
+        <div className="text-[10px] text-[var(--text-tertiary)] mb-3">
+          Snapshot from recent blocks. Compares your live window against historical epoch averages to spot anomalies.
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-y-3">
+          {/* Live Failure Rate */}
+          <div className="text-center md:text-left md:pr-4">
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Live Failure Rate</div>
+            <div className="font-mono text-2xl font-semibold text-[var(--error)]">{analysis.failureRate.toFixed(2)}%</div>
+            <div className="text-[9px] text-[var(--text-tertiary)]">from last {blocks.length} blocks</div>
+          </div>
+          {/* vs Epoch Avg */}
+          <div className="text-center md:text-left md:px-4 md:border-l md:border-[var(--border-primary)]">
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">vs Epoch Avg</div>
+            {historicalBaseline ? (() => {
+              const delta = analysis.failureRate - historicalBaseline.avgFailureRate;
+              const isAbove = delta > 0;
+              return (
+                <>
+                  <div className="font-mono text-2xl font-semibold" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? '+' : ''}{delta.toFixed(2)}<span className="text-sm">pp</span></div>
+                  <div className="text-[9px]" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? 'above' : 'below'} avg ({historicalBaseline.avgFailureRate.toFixed(2)}%)</div>
+                </>
+              );
+            })() : (
+              <div className="text-sm text-[var(--text-muted)]">loading...</div>
+            )}
+          </div>
+          {/* Wasted SOL */}
+          <div className="text-center md:text-left md:px-4 md:border-l md:border-[var(--border-primary)]">
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Wasted SOL</div>
+            <div className="font-mono text-2xl font-semibold text-[var(--warning)]">{(analysis.wastedFees / 1e9).toFixed(6)}</div>
+            <div className="text-[9px] text-[var(--text-tertiary)]">burned on failed txs</div>
+          </div>
+          {/* Session Failed */}
+          <div className="text-center md:text-left md:pl-4 md:border-l md:border-[var(--border-primary)]">
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Session Failed</div>
+            <div className="font-mono text-2xl font-semibold text-[var(--text-primary)]">{analysis.totalFailed.toLocaleString()}<span className="text-sm text-[var(--text-muted)] font-normal"> / {analysis.totalTxs.toLocaleString()}</span></div>
+            <div className="text-[9px] text-[var(--text-tertiary)]">{accumulated.totalBlocks} blocks since {accumulated.sessionStart}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Historical Trend Chart (slimmed) */}
       {historicalBaseline && (() => {
         const hb = historicalBaseline;
-        const delta = analysis.failureRate - hb.avgFailureRate;
-        const isAbove = delta > 0;
-        // Chart data
-        const epochs = hb.allEpochs; // oldest first
+        const epochs = hb.allEpochs;
         const rates = epochs.map(e => 100 - e.successRate);
         const maxR = Math.max(...rates, hb.avgFailureRate * 1.5, 0.1);
-        // Compute nice Y-axis ticks
         const yTickStep = maxR <= 5 ? 1 : maxR <= 15 ? 2.5 : maxR <= 30 ? 5 : 10;
         const yTicks: number[] = [];
         for (let v = 0; v <= maxR; v += yTickStep) yTicks.push(v);
-        // X positions as percentages (0-100) for positioning
         const xPcts = epochs.map((_, i) => epochs.length > 1 ? (i / (epochs.length - 1)) * 100 : 50);
         const yPcts = rates.map(r => 100 - (r / maxR) * 100);
         const avgYPct = 100 - (hb.avgFailureRate / maxR) * 100;
-        // Date labels for x-axis (every ~10 epochs)
         const xLabelInterval = Math.max(1, Math.ceil(epochs.length / 6));
         const xLabels = epochs.map((e, i) => {
           if (i === 0 || i === epochs.length - 1 || i % xLabelInterval === 0) {
@@ -1915,39 +2044,8 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
           return null;
         }).filter(Boolean) as { i: number; label: string; epoch: number }[];
         return (
-          <div className="card p-4 mb-4 animate-section">
-            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
-              Historical Baseline <span className="normal-case text-[var(--text-tertiary)]">(epoch-level failure rates)</span>
-            </div>
-            <div className="grid grid-cols-3 gap-3 mb-3">
-              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Epoch Avg Failure Rate</div>
-                <div className="text-lg font-mono text-[var(--text-primary)]">{hb.avgFailureRate.toFixed(2)}%</div>
-                <div className="text-[9px] text-[var(--text-tertiary)]">across {hb.epochCount} epochs</div>
-              </div>
-              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Current Epoch</div>
-                <div className="text-lg font-mono" style={{ color: hb.currentFailureRate > hb.avgFailureRate ? 'var(--error)' : 'var(--success)' }}>{hb.currentFailureRate.toFixed(2)}%</div>
-                <div className="text-[9px] text-[var(--text-tertiary)]">failure rate</div>
-              </div>
-              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Failed TXs (Epoch)</div>
-                <div className="text-lg font-mono text-[var(--error)]">{hb.formatNum(hb.currentFailedTx)}</div>
-                <div className="text-[9px] text-[var(--text-tertiary)]">of {hb.formatNum(hb.currentTotalTx)} total</div>
-              </div>
-            </div>
-            {/* Comparison callout */}
-            <div className="text-xs px-2.5 py-1.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)] mb-4">
-              <span className="text-[var(--text-muted)]">Live failure rate </span>
-              <span className="font-mono text-[var(--text-primary)]">{analysis.failureRate.toFixed(2)}%</span>
-              <span className="text-[var(--text-muted)]"> is </span>
-              <span className="font-mono" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{Math.abs(delta).toFixed(2)}pp {isAbove ? 'above' : 'below'}</span>
-              <span className="text-[var(--text-muted)]"> the epoch average — </span>
-              <span style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? 'Higher than usual' : 'Within normal range'}</span>
-            </div>
-            {/* Failure Rate Trend — enhanced chart */}
-            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-2 flex items-center justify-between">
+          <div className="card p-3 mb-4 animate-section">
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1 flex items-center justify-between">
               <span>Failure Rate by Epoch</span>
               <div className="flex items-center gap-3 normal-case text-[var(--text-tertiary)]">
                 <span className="flex items-center gap-1"><span className="w-3 h-0 inline-block" style={{ borderTop: '1.5px solid var(--error)' }} /> failure rate</span>
@@ -1955,26 +2053,24 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                 <span>{epochs.length} epochs</span>
               </div>
             </div>
-            <div className="relative rounded-lg bg-[var(--bg-tertiary)]" style={{ padding: '12px 12px 0 32px' }}>
-              {/* Y-axis labels */}
-              <div className="absolute left-0 top-3 bottom-8" style={{ width: '30px' }}>
+            <div className="text-[10px] text-[var(--text-tertiary)] mb-2">
+              Each epoch is ~2-3 days. Hover for details. Rising trend may indicate network congestion or new program deployments.
+            </div>
+            <div className="relative rounded-lg bg-[var(--bg-tertiary)]" style={{ padding: '8px 12px 0 32px' }}>
+              <div className="absolute left-0 top-2 bottom-7" style={{ width: '30px' }}>
                 {yTicks.map(v => (
                   <div key={v} className="absolute right-1 text-[8px] font-mono text-[var(--text-muted)] -translate-y-1/2" style={{ top: `${100 - (v / maxR) * 100}%` }}>
                     {v.toFixed(v === Math.floor(v) ? 0 : 1)}%
                   </div>
                 ))}
               </div>
-              {/* Chart area */}
-              <div className="relative" style={{ height: '140px' }}>
-                {/* Horizontal grid lines */}
+              <div className="relative" style={{ height: '110px' }}>
                 {yTicks.map(v => (
                   <div key={v} className="absolute left-0 right-0 border-t border-[var(--border-primary)]" style={{ top: `${100 - (v / maxR) * 100}%`, opacity: v === 0 ? 0.5 : 0.2 }} />
                 ))}
-                {/* Average reference line */}
                 <div className="absolute left-0 right-0" style={{ top: `${avgYPct}%`, borderTop: '1.5px dashed var(--accent-secondary)', opacity: 0.5 }}>
                   <span className="absolute right-0 -top-3.5 text-[8px] font-mono text-[var(--accent-secondary)]">avg</span>
                 </div>
-                {/* SVG for area fill and line only */}
                 <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="failGrad" x1="0" y1="0" x2="0" y2="1">
@@ -1986,7 +2082,6 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                   <path d={`${xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} L${xPcts[xPcts.length - 1]},100 L${xPcts[0]},100 Z`} fill="url(#failGrad)" />
                   <path d={xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} fill="none" stroke="var(--error)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
                 </svg>
-                {/* Dots — HTML so they don't stretch */}
                 {epochs.map((e, i) => {
                   const isCurrent = i === epochs.length - 1;
                   return (
@@ -1999,23 +2094,18 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                     </div>
                   );
                 })}
-                {/* Hover zones — invisible hit areas with crosshair + tooltip */}
                 <div className="absolute inset-0 flex">
                   {epochs.map((e, i) => {
                     const rate = rates[i];
                     const isCurrent = i === epochs.length - 1;
                     const dateStr = new Date(e.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-                    // Position tooltip toward center to avoid edge overflow
                     const tooltipAlign = i < epochs.length * 0.2 ? 'left-0' : i > epochs.length * 0.8 ? 'right-0' : 'left-1/2 -translate-x-1/2';
                     return (
                       <div key={e.epoch} className="flex-1 group relative cursor-crosshair" style={{ minWidth: 0 }}>
-                        {/* Vertical crosshair line */}
                         <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[1px] bg-[var(--text-muted)] opacity-0 group-hover:opacity-30 transition-opacity pointer-events-none" />
-                        {/* Enlarged hover dot */}
                         <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full border border-[var(--error)] bg-[var(--bg-primary)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ top: `${yPcts[i]}%` }} />
-                        {/* Tooltip */}
                         <div className={`absolute bottom-full ${tooltipAlign} mb-2 hidden group-hover:block z-30 pointer-events-none`}>
-                          <div className="bg-[var(--bg-primary)] border border-[var(--border-secondary)] rounded-lg px-3 py-2.5 shadow-2xl text-[10px] whitespace-nowrap">
+                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2.5 shadow-2xl text-[10px] whitespace-nowrap">
                             <div className="flex items-center gap-2 mb-1.5">
                               <span className="font-semibold text-[var(--text-primary)]">Epoch {e.epoch}</span>
                               {isCurrent && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-[var(--error)]/15 text-[var(--error)]">current</span>}
@@ -2042,13 +2132,10 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                   })}
                 </div>
               </div>
-              {/* X-axis date labels */}
-              <div className="relative h-5 mt-1" style={{ marginLeft: 0 }}>
+              <div className="relative h-4 mt-1" style={{ marginLeft: 0 }}>
                 {xLabels.map(({ i, label, epoch }) => (
-                  <div key={epoch} className="absolute -translate-x-1/2 text-[8px] text-[var(--text-muted)]" style={{ left: `${xPcts[i]}%` }}>
-                    <div className="text-center">
-                      <div className="text-[var(--text-tertiary)]">{label}</div>
-                    </div>
+                  <div key={epoch} className="absolute -translate-x-1/2 text-[8px] text-[var(--text-tertiary)]" style={{ left: `${xPcts[i]}%` }}>
+                    {label}
                   </div>
                 ))}
               </div>
@@ -2057,298 +2144,472 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
         );
       })()}
 
-      {/* Data scope context banner */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 mb-4 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-[10px]">
-        <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-          <span className="text-[var(--text-muted)] uppercase font-medium">Live Snapshot</span>
-        </div>
-        <span className="text-[var(--text-muted)]">Blocks: <span className="font-mono text-[var(--text-secondary)]">{blocks.length}</span></span>
-        {slotRange && (
-          <span className="text-[var(--text-muted)]">Slots: <span className="font-mono text-[var(--text-secondary)]">{slotRange.min.toLocaleString()}–{slotRange.max.toLocaleString()}</span></span>
-        )}
-        <span className="text-[var(--text-muted)]">TXs scanned: <span className="font-mono text-[var(--text-secondary)]">{analysis.totalTxs.toLocaleString()}</span></span>
-        <span className="text-[var(--text-muted)]">Refresh: <span className="font-mono text-[var(--text-secondary)]">~2s</span></span>
-        <span className="text-[var(--text-tertiary)]">This is a narrow real-time window, not historical data.</span>
-      </div>
-
-      {/* Row 1: Overview + Cost of Failures */}
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
-        {/* Failure Overview */}
-        <div className="card p-4 animate-section">
-          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--error)]" />
-            Failure Overview
-          </div>
-          <div className="flex items-center gap-4 mb-3">
-            <div className="text-3xl font-mono text-[var(--error)]">{analysis.totalFailed}</div>
-            <div>
-              <div className="text-sm text-[var(--text-secondary)]">Failed TXs <span className="text-[var(--text-tertiary)] text-xs">(count)</span></div>
-              <div className="text-xs text-[var(--text-muted)]">of {analysis.totalTxs.toLocaleString()} total ({analysis.failureRate.toFixed(2)}% failure rate)</div>
-              {historicalBaseline && (() => {
-                const delta = analysis.failureRate - historicalBaseline.avgFailureRate;
-                const isAbove = delta > 0;
-                return (
-                  <div className="text-[10px] mt-0.5">
-                    <span className="font-mono" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? '+' : ''}{delta.toFixed(2)}pp</span>
-                    <span className="text-[var(--text-tertiary)]"> vs epoch avg ({historicalBaseline.avgFailureRate.toFixed(2)}%)</span>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden mb-3">
-            <div className="h-full bg-[var(--error)] rounded-full" style={{ width: `${Math.min(100, analysis.failureRate * 10)}%` }} />
-          </div>
-
-          <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1.5">Failures by Category <span className="normal-case text-[var(--text-tertiary)]">(tx type)</span></div>
-          <div className="space-y-1">
-            {analysis.categoryBreakdown.map(([cat, count]) => {
-              const pct = analysis.totalFailed > 0 ? (count / analysis.totalFailed) * 100 : 0;
-              return (
-                <div key={cat} className="flex items-center gap-2 text-xs">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: CATEGORY_COLORS[cat] }} />
-                  <span className="text-[var(--text-secondary)] capitalize w-14">{cat}</span>
-                  <div className="flex-1 h-1 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full bg-[var(--error)]/60" style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="font-mono text-[var(--text-muted)] w-14 text-right">{count} <span className="text-[var(--text-tertiary)]">({pct.toFixed(0)}%)</span></span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Cost of Failures */}
-        <div className="card p-4 animate-section" style={{ animationDelay: '0.1s' }}>
-          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
-            Cost of Failures <span className="normal-case text-[var(--text-tertiary)]">(wasted resources)</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            <div className="bg-[var(--bg-secondary)] rounded-lg p-3" title="Compute units consumed by failed transactions that produced no useful result">
-              <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Wasted CU</div>
-              <div className="font-mono text-lg text-[var(--warning)]">{formatCU(analysis.wastedCU)}</div>
-              <div className="text-[10px] text-[var(--text-tertiary)]">
-                {((analysis.wastedCU / (SOLANA_LIMITS.BLOCK_CU_LIMIT * blocks.length)) * 100).toFixed(2)}% of block capacity
-              </div>
-            </div>
-            <div className="bg-[var(--bg-secondary)] rounded-lg p-3" title="Fees paid for transactions that ultimately failed - still charged to the sender">
-              <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Burned Fees</div>
-              <div className="font-mono text-lg text-[var(--warning)]">{(analysis.wastedFees / 1e9).toFixed(6)} <span className="text-xs text-[var(--text-muted)]">SOL</span></div>
-              <div className="text-[10px] text-[var(--text-tertiary)]">
-                still charged to senders
-              </div>
-            </div>
-          </div>
-
-          {/* CU waste proportion bar */}
-          <div className="mb-3">
-            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">CU Distribution (useful vs wasted)</div>
-            <div className="h-3 bg-[var(--bg-tertiary)] rounded-full overflow-hidden flex progress-animated">
-              <div className="h-full bg-[var(--success)]/60 transition-all duration-700" style={{ width: `${analysis.totalCU > 0 ? ((analysis.totalCU - analysis.wastedCU) / analysis.totalCU) * 100 : 100}%` }} title={`Useful: ${formatCU(analysis.totalCU - analysis.wastedCU)}`} />
-              <div className="h-full bg-[var(--error)]/80 transition-all duration-700" style={{ width: `${analysis.totalCU > 0 ? (analysis.wastedCU / analysis.totalCU) * 100 : 0}%` }} title={`Wasted: ${formatCU(analysis.wastedCU)}`} />
-            </div>
-            <div className="flex justify-between text-[9px] mt-0.5">
-              <span className="text-[var(--success)]">{analysis.totalCU > 0 ? (((analysis.totalCU - analysis.wastedCU) / analysis.totalCU) * 100).toFixed(1) : '100'}% useful</span>
-              <span className="text-[var(--error)]">{analysis.totalCU > 0 ? ((analysis.wastedCU / analysis.totalCU) * 100).toFixed(1) : '0'}% wasted</span>
-            </div>
-          </div>
-
-          {/* Fee waste proportion bar */}
-          <div className="mb-3">
-            <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Fees (successful vs burned)</div>
-            <div className="h-3 bg-[var(--bg-tertiary)] rounded-full overflow-hidden flex">
-              <div className="h-full bg-[var(--accent)]/60" style={{ width: `${analysis.totalFees > 0 ? ((analysis.totalFees - analysis.wastedFees) / analysis.totalFees) * 100 : 100}%` }} />
-              <div className="h-full bg-[var(--error)]/80" style={{ width: `${analysis.totalFees > 0 ? (analysis.wastedFees / analysis.totalFees) * 100 : 0}%` }} />
-            </div>
-            <div className="flex justify-between text-[9px] mt-0.5">
-              <span className="text-[var(--accent)]">{analysis.totalFees > 0 ? (((analysis.totalFees - analysis.wastedFees) / analysis.totalFees) * 100).toFixed(1) : '100'}% for successful TXs</span>
-              <span className="text-[var(--error)]">{analysis.totalFees > 0 ? ((analysis.wastedFees / analysis.totalFees) * 100).toFixed(1) : '0'}% burned</span>
-            </div>
-          </div>
-
-          <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1.5">Avg per Failed TX</div>
-          <div className="grid grid-cols-2 gap-2 text-[10px]">
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">CU used</span>
-              <span className="font-mono text-[var(--text-secondary)]">{analysis.totalFailed > 0 ? formatCU(Math.round(analysis.wastedCU / analysis.totalFailed)) : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">Fee paid</span>
-              <span className="font-mono text-[var(--text-secondary)]">{analysis.totalFailed > 0 ? Math.round(analysis.wastedFees / analysis.totalFailed).toLocaleString() : '—'} <span className="text-[var(--text-tertiary)]">lamports</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* All Failing Programs (full width) — accumulated across session */}
+      {/* Failing Programs (full width) */}
       <div className="card p-4 mb-4 animate-section">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[var(--error)] live-dot" />
-            <span className="text-xs text-[var(--text-secondary)] uppercase tracking-wider font-medium">All Failing Programs</span>
+            <span className="text-xs text-[var(--text-secondary)] uppercase tracking-wider font-medium">Failing Programs</span>
             <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">{accumulated.programRates.length}</span>
           </div>
-          <span className="text-[9px] text-[var(--text-tertiary)]">
-            {accumulated.totalBlocks} blocks since {accumulated.sessionStart} ({accumulated.totalTxs.toLocaleString()} txs)
-          </span>
+          <span className="text-[9px] text-[var(--text-tertiary)]">{accumulated.totalBlocks} blocks since {accumulated.sessionStart}</span>
         </div>
         <div className="text-[10px] text-[var(--text-tertiary)] mb-3">
-          Accumulated across this session: every program with at least one failure since page load.
-          Bar = relative failure count. Count = failed/total calls. Rate = failure %.
+          Programs ranked by failure count this session. "vs Epoch" compares each program's failure rate against the current epoch's network-wide rate.
         </div>
 
-        {/* Column labels */}
-        {accumulated.programRates.length > 0 && (
-          <div className="flex items-center gap-2.5 px-2 mb-1.5 text-[9px] text-[var(--text-muted)] uppercase tracking-wide">
-            <span className="w-5 flex-shrink-0 text-right">#</span>
-            <span className="w-28 flex-shrink-0">Program</span>
-            <span className="flex-1">Failure count <span className="normal-case text-[var(--text-tertiary)]">(relative to #1)</span></span>
-            <span className="w-16 text-right flex-shrink-0">Failed/Total</span>
-            <span className="w-14 text-center flex-shrink-0">Fail Rate</span>
-          </div>
-        )}
+        {/* Programs table with bars */}
+        {accumulated.programRates.length > 0 && (() => {
+          const currentEpochFailRate = networkHistory.currentEpoch ? 100 - (networkHistory.currentEpoch.successRate || 0) : null;
 
-        {accumulated.programRates.length > 0 ? (
-          <div className="max-h-[420px] overflow-y-auto pr-1 space-y-px">
-            {accumulated.programRates.map(({ prog, failCount, total, rate }, idx) => {
-              const info = getProgramInfo(prog);
-              const maxFails = accumulated.programRates[0]?.failCount || 1;
-              const barWidth = Math.max(3, (failCount / maxFails) * 100);
+          // Compute per-program CU waste from current blocks for inline display
+          const progCUMap = new Map<string, number>();
+          for (const block of blocks) {
+            if (!block.transactions) continue;
+            for (const tx of block.transactions) {
+              if (!tx.success && tx.programs.length > 0) {
+                const p = tx.programs[0];
+                progCUMap.set(p, (progCUMap.get(p) || 0) + tx.computeUnits);
+              }
+            }
+          }
 
-              // Rate severity badge
-              const rateBadge = rate > 50
-                ? { bg: 'rgba(239, 68, 68, 0.15)', text: 'var(--error)' }
-                : rate > 20
-                  ? { bg: 'rgba(245, 158, 11, 0.12)', text: 'var(--warning)' }
-                  : { bg: 'rgba(196, 181, 253, 0.1)', text: 'var(--text-muted)' };
+          return (
+            <>
+              {/* Column headers */}
+              <div className="flex items-center gap-2 px-2 mb-1.5 text-[9px] text-[var(--text-muted)] uppercase tracking-wide">
+                <span className="w-5 flex-shrink-0 text-right">#</span>
+                <span className="w-28 flex-shrink-0">Program</span>
+                <span className="flex-1">Failure volume <span className="normal-case text-[var(--text-tertiary)]">(relative)</span></span>
+                <span className="w-16 text-right flex-shrink-0">Failed/Total</span>
+                <span className="w-14 text-center flex-shrink-0">Rate</span>
+                {currentEpochFailRate !== null && <span className="w-14 text-center flex-shrink-0">vs Epoch</span>}
+                <span className="w-16 text-right flex-shrink-0">CU Wasted</span>
+              </div>
+              <div className="max-h-[460px] overflow-y-auto pr-1 space-y-px">
+                {accumulated.programRates.map(({ prog, failCount, total, rate }, idx) => {
+                  const info = getProgramInfo(prog);
+                  const maxFails = accumulated.programRates[0]?.failCount || 1;
+                  const barWidth = Math.max(3, (failCount / maxFails) * 100);
+                  const cuWasted = progCUMap.get(prog) || 0;
 
-              return (
-                <div
-                  key={prog}
-                  className="program-row flex items-center gap-2.5 py-2 px-2 rounded-lg animate-row"
-                  style={{ animationDelay: `${Math.min(idx * 30, 300)}ms` }}
-                >
-                  <span className={`text-[10px] w-5 text-right flex-shrink-0 font-mono ${idx < 3 ? 'text-[var(--text-primary)] font-bold' : 'text-[var(--text-muted)]'}`}>
-                    {idx + 1}
-                  </span>
-                  <a
-                    href={getSolscanUrl('account', prog)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 w-28 flex-shrink-0 group/link"
-                    title={`${info.name}\n${prog}\n${failCount} failures / ${total} total calls (${rate.toFixed(1)}%)`}
-                  >
-                    <span className="w-2.5 h-2.5 rounded flex-shrink-0" style={{ backgroundColor: info.color }} />
-                    <span className="text-[11px] text-[var(--text-secondary)] truncate group-hover/link:text-[var(--accent-secondary)] group-hover/link:underline">
-                      {info.name}
-                    </span>
-                  </a>
+                  const rateBadge = rate > 50
+                    ? { bg: 'rgba(239, 68, 68, 0.15)', text: 'var(--error)' }
+                    : rate > 20
+                      ? { bg: 'rgba(245, 158, 11, 0.12)', text: 'var(--warning)' }
+                      : { bg: 'rgba(196, 181, 253, 0.1)', text: 'var(--text-muted)' };
 
-                  {/* Bar */}
-                  <div className="flex-1 h-6 rounded-md overflow-hidden relative bg-[var(--bg-tertiary)]/30">
+                  return (
                     <div
-                      className="h-full rounded-md animate-bar"
-                      style={{
-                        width: `${barWidth}%`,
-                        background: `linear-gradient(90deg, ${info.color}cc 0%, ${info.color}40 100%)`,
-                        animationDelay: `${Math.min(idx * 40, 400)}ms`,
-                      }}
-                    />
-                    {barWidth > 14 && (
-                      <span className="absolute inset-y-0 left-2.5 flex items-center text-[10px] font-mono font-semibold text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-                        {failCount.toLocaleString()}
+                      key={prog}
+                      className="program-row flex items-center gap-2 py-2 px-2 rounded-lg animate-row"
+                      style={{ animationDelay: `${Math.min(idx * 25, 250)}ms` }}
+                    >
+                      {/* Rank */}
+                      <span className={`text-[10px] w-5 text-right flex-shrink-0 font-mono ${idx < 3 ? 'text-[var(--text-primary)] font-bold' : 'text-[var(--text-muted)]'}`}>
+                        {idx + 1}
                       </span>
-                    )}
+
+                      {/* Program name + category dot */}
+                      <a
+                        href={getSolscanUrl('account', prog)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 w-28 flex-shrink-0 group/link"
+                        title={`${info.name}\n${prog}\n${info.category} · ${failCount} failures / ${total} total calls (${rate.toFixed(1)}%)`}
+                      >
+                        <span className="w-2.5 h-2.5 rounded flex-shrink-0" style={{ backgroundColor: info.color }} />
+                        <span className="text-[11px] text-[var(--text-secondary)] truncate group-hover/link:text-[var(--accent-secondary)] group-hover/link:underline">
+                          {info.name}
+                        </span>
+                      </a>
+
+                      {/* Bar visualization */}
+                      <div className="flex-1 h-6 rounded-md overflow-hidden relative bg-[var(--bg-tertiary)]/30">
+                        <div
+                          className="h-full rounded-md animate-bar"
+                          style={{
+                            width: `${barWidth}%`,
+                            background: `linear-gradient(90deg, ${info.color}cc 0%, ${info.color}40 100%)`,
+                            animationDelay: `${Math.min(idx * 35, 350)}ms`,
+                          }}
+                        />
+                        {barWidth > 12 && (
+                          <span className="absolute inset-y-0 left-2.5 flex items-center text-[10px] font-mono font-semibold text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                            {failCount.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Failed / Total */}
+                      <div className="w-16 flex-shrink-0 text-right">
+                        <span className="text-[10px] font-mono text-[var(--text-secondary)]">{failCount}</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)]">/{total}</span>
+                      </div>
+
+                      {/* Rate badge */}
+                      <span
+                        className="text-[10px] font-mono w-14 text-center flex-shrink-0 py-0.5 rounded"
+                        style={{ backgroundColor: rateBadge.bg, color: rateBadge.text }}
+                      >
+                        {rate.toFixed(1)}%
+                      </span>
+
+                      {/* vs Epoch delta */}
+                      {currentEpochFailRate !== null && (() => {
+                        const delta = rate - currentEpochFailRate;
+                        const isWorse = delta > 0;
+                        return (
+                          <span
+                            className="text-[10px] font-mono w-14 text-center flex-shrink-0 py-0.5 rounded"
+                            style={{
+                              backgroundColor: isWorse ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                              color: isWorse ? 'var(--error)' : 'var(--success)',
+                            }}
+                            title={`Program: ${rate.toFixed(1)}% vs epoch: ${currentEpochFailRate.toFixed(1)}%`}
+                          >
+                            {isWorse ? '\u2191' : '\u2193'}{Math.abs(delta).toFixed(1)}%
+                          </span>
+                        );
+                      })()}
+
+                      {/* CU wasted */}
+                      <span className="text-[10px] font-mono w-16 text-right flex-shrink-0 text-[var(--text-muted)]" title={`${cuWasted.toLocaleString()} CU wasted by this program`}>
+                        {formatCU(cuWasted)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Summary bar below table */}
+              <div className="mt-3 pt-3 border-t border-[var(--border-primary)]">
+                <div className="flex items-center gap-4 text-[10px]">
+                  <span className="text-[var(--text-muted)] uppercase">Category breakdown</span>
+                  <div className="flex-1 h-3 rounded-full overflow-hidden flex">
+                    {analysis.categoryBreakdown.map(([cat, count]) => {
+                      const pct = analysis.totalFailed > 0 ? (count / analysis.totalFailed) * 100 : 0;
+                      if (pct < 1) return null;
+                      return (
+                        <div
+                          key={cat}
+                          className="h-full transition-all duration-700"
+                          style={{ width: `${pct}%`, backgroundColor: CATEGORY_COLORS[cat] || '#6b7280', opacity: 0.7 }}
+                          title={`${cat}: ${count} failures (${pct.toFixed(1)}%)`}
+                        />
+                      );
+                    })}
                   </div>
-
-                  {/* Count */}
-                  <div className="w-16 flex-shrink-0 text-right">
-                    <span className="text-[10px] font-mono text-[var(--text-secondary)]">{failCount}</span>
-                    <span className="text-[10px] font-mono text-[var(--text-muted)]">/{total}</span>
+                  <div className="flex gap-2">
+                    {analysis.categoryBreakdown.slice(0, 4).map(([cat, count]) => {
+                      const pct = analysis.totalFailed > 0 ? (count / analysis.totalFailed) * 100 : 0;
+                      return (
+                        <span key={cat} className="flex items-center gap-1 text-[9px] text-[var(--text-tertiary)] capitalize">
+                          <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: CATEGORY_COLORS[cat] || '#6b7280' }} />
+                          {cat} {pct.toFixed(0)}%
+                        </span>
+                      );
+                    })}
                   </div>
-
-                  {/* Rate badge */}
-                  <span
-                    className="text-[10px] font-mono w-14 text-center flex-shrink-0 py-0.5 rounded"
-                    style={{ backgroundColor: rateBadge.bg, color: rateBadge.text }}
-                  >
-                    {rate.toFixed(1)}%
-                  </span>
-
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center text-[var(--text-muted)] py-6 text-sm">No program-specific failures detected</div>
-        )}
-        {accumulated.programRates.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-[var(--border-primary)]">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[9px] text-[var(--text-tertiary)]">
-              <div>
-                <span className="text-[var(--text-muted)] uppercase font-medium">High rate (&gt;50%)</span>
-                <span className="block mt-0.5">Likely a program bug, expired parameters, or misconfigured slippage. Users are consistently sending invalid transactions.</span>
               </div>
-              <div>
-                <span className="text-[var(--text-muted)] uppercase font-medium">Medium rate (20-50%)</span>
-                <span className="block mt-0.5">Often DEX arbitrage bots or liquidation bots that intentionally spam transactions expecting most to fail.</span>
-              </div>
-              <div>
-                <span className="text-[var(--text-muted)] uppercase font-medium">Low rate (&lt;20%)</span>
-                <span className="block mt-0.5">Normal failure rate. Common causes: stale prices, race conditions between users, or insufficient balance.</span>
-              </div>
-            </div>
-            <div className="mt-2 text-[9px] text-[var(--text-muted)]">
-              Bar colors match each program&apos;s category (green = DEX, orange = perps, teal = lending, pink = NFT, blue = staking). Accumulated across {accumulated.totalBlocks} blocks this session via Helius RPC.
-            </div>
-          </div>
+            </>
+          );
+        })()}
+        {accumulated.programRates.length === 0 && (
+          <div className="text-center text-[var(--text-muted)] py-6 text-sm">No program-specific failures detected yet</div>
         )}
       </div>
 
-      {/* Row 3: Top Failing Wallets (full width) */}
-      <div className="card p-4 animate-section" style={{ animationDelay: '0.15s' }}>
-        <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-          Top Failing Wallets <span className="normal-case text-[var(--text-tertiary)]">(session total)</span>
-        </div>
-        {accumulated.topPayers.length > 0 ? (
-          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
-            {accumulated.topPayers.map(([payer, count], idx) => {
-              const maxCount = accumulated.topPayers[0]?.[1] || 1;
-              const barPct = (count / maxCount) * 100;
-              return (
-                <div key={payer}>
-                  <div className="flex items-center justify-between mb-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-[var(--text-muted)] w-4">{idx + 1}.</span>
-                      <a
-                        href={getSolscanUrl('account', payer)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-mono text-[var(--accent-secondary)] hover:underline"
-                      >
-                        {payer.slice(0, 6)}...{payer.slice(-4)}
-                      </a>
+      {/* Session Insights — 3-column */}
+      <div className="grid md:grid-cols-3 gap-4 mb-4">
+
+        {/* CU Waste by Program */}
+        <div className="card p-4 animate-section">
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
+            CU Waste by Program
+          </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Compute units burned by failed transactions, by primary program invoked. Higher waste = more expensive failures.</div>
+          {analysis.topCUWaste.length > 0 ? (
+            <div className="space-y-2">
+              {analysis.topCUWaste.map(({ prog, cu }, idx) => {
+                const info = getProgramInfo(prog);
+                const maxCU = analysis.topCUWaste[0]?.cu || 1;
+                const pct = analysis.wastedCU > 0 ? (cu / analysis.wastedCU) * 100 : 0;
+                return (
+                  <div key={prog} className="animate-row" style={{ animationDelay: `${idx * 30}ms` }}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded flex-shrink-0" style={{ backgroundColor: info.color }} />
+                        <span className="text-[11px] text-[var(--text-secondary)] truncate" style={{ maxWidth: '100px' }}>{info.name}</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-[var(--text-muted)]">{formatCU(cu)} <span className="text-[var(--text-tertiary)]">({pct.toFixed(0)}%)</span></span>
                     </div>
-                    <span className="text-xs font-mono text-[var(--error)]">{count}</span>
+                    <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div className="h-full rounded-full animate-bar" style={{ width: `${(cu / maxCU) * 100}%`, backgroundColor: info.color, opacity: 0.6, animationDelay: `${idx * 40}ms` }} />
+                    </div>
                   </div>
-                  <div className="ml-6 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full bg-[var(--accent)]/50" style={{ width: `${barPct}%` }} />
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center text-[var(--text-muted)] py-4 text-sm">No CU data yet</div>
+          )}
+          {analysis.wastedCU > 0 && (
+            <div className="mt-3 pt-2 border-t border-[var(--border-primary)] text-[9px] text-[var(--text-tertiary)]">
+              Total wasted: <span className="font-mono text-[var(--text-muted)]">{formatCU(analysis.wastedCU)}</span> CU across {analysis.totalFailed} failed txs
+            </div>
+          )}
+        </div>
+
+        {/* Failure by Block Position */}
+        <div className="card p-4 animate-section" style={{ animationDelay: '0.05s' }}>
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+            Failure by Block Position
+          </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Where in each block do failures occur? Top = high-priority txs, bottom = low-priority / vote txs.</div>
+          {analysis.positionBuckets.some(b => b.total > 0) ? (() => {
+            const labels = ['Top third', 'Middle third', 'Bottom third'];
+            const hints = ['High priority fee TXs', 'Mid priority TXs', 'Low priority / vote TXs'];
+            const rates = analysis.positionBuckets.map(b => b.total > 0 ? (b.failed / b.total) * 100 : 0);
+            const maxRate = Math.max(...rates, 0.1);
+            return (
+              <div className="space-y-3">
+                {labels.map((label, idx) => {
+                  const bucket = analysis.positionBuckets[idx];
+                  const rate = rates[idx];
+                  return (
+                    <div key={label}>
+                      <div className="flex justify-between items-baseline mb-1">
+                        <div>
+                          <span className="text-[11px] text-[var(--text-secondary)]">{label}</span>
+                          <span className="text-[9px] text-[var(--text-tertiary)] ml-1.5">{hints[idx]}</span>
+                        </div>
+                        <span className="font-mono text-[11px]" style={{ color: rate > 10 ? 'var(--error)' : rate > 5 ? 'var(--warning)' : 'var(--text-muted)' }}>{rate.toFixed(1)}%</span>
+                      </div>
+                      <div className="h-2.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(rate / maxRate) * 100}%`, backgroundColor: rate > 10 ? 'var(--error)' : rate > 5 ? 'var(--warning)' : 'var(--accent)', opacity: 0.6 }} />
+                      </div>
+                      <div className="text-[9px] text-[var(--text-tertiary)] mt-0.5 font-mono">{bucket.failed.toLocaleString()} failed / {bucket.total.toLocaleString()} txs</div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })() : (
+            <div className="text-center text-[var(--text-muted)] py-4 text-sm">Loading position data...</div>
+          )}
+        </div>
+
+        {/* Error Types (compact) */}
+        <div className="card p-4 animate-section" style={{ animationDelay: '0.1s' }}>
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--accent-tertiary)]" />
+            Error Types
+          </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Most common error codes from failed transactions. "Custom" = program-specific errors (e.g. slippage, insufficient balance).</div>
+          {accumulated.errorTypes.length > 0 ? (() => {
+            const ERROR_COLORS: Record<string, string> = {
+              'Custom': '#ef4444', 'InsufficientFundsForFee': '#f59e0b', 'InvalidAccountData': '#8b5cf6',
+              'AccountNotFound': '#60a5fa', 'ProgramFailedToComplete': '#ec4899', 'AccountBorrowFailed': '#14b8a6',
+              'BorshIoError': '#f97316', 'InvalidArgument': '#a855f7', 'MissingRequiredSignature': '#eab308',
+            };
+            const getColor = (type: string) => ERROR_COLORS[type] || '#6b7280';
+            const top5 = accumulated.errorTypes.slice(0, 5);
+            const maxCount = top5[0]?.count || 1;
+            return (
+              <div className="space-y-2">
+                {top5.map(({ type, count, pct }, idx) => (
+                  <div key={type} className="animate-row" style={{ animationDelay: `${idx * 30}ms` }}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[11px] text-[var(--text-secondary)] truncate" style={{ maxWidth: '140px' }} title={type}>{type}</span>
+                      <span className="text-[10px] font-mono text-[var(--text-muted)]">{pct.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div className="h-full rounded-full animate-bar" style={{ width: `${(count / maxCount) * 100}%`, backgroundColor: getColor(type), opacity: 0.6, animationDelay: `${idx * 40}ms` }} />
+                    </div>
+                  </div>
+                ))}
+                {accumulated.errorTypes.length > 5 && (
+                  <div className="text-[9px] text-[var(--text-tertiary)]">
+                    + {accumulated.errorTypes.length - 5} more types
+                  </div>
+                )}
+              </div>
+            );
+          })() : (
+            <div className="text-center text-[var(--text-muted)] py-4 text-sm">Accumulating...</div>
+          )}
+        </div>
+      </div>
+
+      {/* Two-Column: Cost + Session Trend */}
+      <div className="grid md:grid-cols-2 gap-4 mb-4">
+
+        {/* Cost of Failures */}
+        <div className="card p-4 animate-section flex flex-col" style={{ animationDelay: '0.1s' }}>
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
+            Cost of Failures
+          </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Resources consumed by failed transactions. Failed txs still pay fees and use compute, wasting network capacity.</div>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
+              <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Wasted CU</div>
+              <div className="font-mono text-lg text-[var(--warning)]">{formatCU(analysis.wastedCU)}</div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
+              <div className="text-[10px] text-[var(--text-muted)] uppercase mb-1">Burned Fees</div>
+              <div className="font-mono text-lg text-[var(--warning)]">{(analysis.wastedFees / 1e9).toFixed(6)} <span className="text-xs text-[var(--text-muted)]">SOL</span></div>
+            </div>
+          </div>
+          {/* Visual waste proportions */}
+          <div className="space-y-2 mt-auto">
+            <div>
+              <div className="flex justify-between text-[9px] mb-1">
+                <span className="text-[var(--text-muted)]">CU waste vs total capacity</span>
+                <span className="font-mono text-[var(--text-secondary)]">{((analysis.wastedCU / Math.max(SOLANA_LIMITS.BLOCK_CU_LIMIT * blocks.length, 1)) * 100).toFixed(2)}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                <div className="h-full rounded-full bg-[var(--warning)] transition-all duration-500" style={{ width: `${Math.min((analysis.wastedCU / Math.max(SOLANA_LIMITS.BLOCK_CU_LIMIT * blocks.length, 1)) * 100, 100)}%`, opacity: 0.7 }} />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-[9px] mb-1">
+                <span className="text-[var(--text-muted)]">Fee waste vs total fees</span>
+                <span className="font-mono text-[var(--text-secondary)]">{analysis.totalFees > 0 ? ((analysis.wastedFees / analysis.totalFees) * 100).toFixed(1) : '0'}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                <div className="h-full rounded-full bg-[var(--warning)] transition-all duration-500" style={{ width: `${Math.min(analysis.totalFees > 0 ? (analysis.wastedFees / analysis.totalFees) * 100 : 0, 100)}%`, opacity: 0.7 }} />
+              </div>
+            </div>
+            {analysis.totalFailed > 0 && (
+              <div className="pt-2 border-t border-[var(--border-primary)] text-[9px] text-[var(--text-tertiary)]">
+                Avg per failed tx: <span className="font-mono text-[var(--text-muted)]">{formatCU(Math.round(analysis.wastedCU / analysis.totalFailed))} CU</span> · <span className="font-mono text-[var(--text-muted)]">{(analysis.wastedFees / analysis.totalFailed / 1e9).toFixed(6)} SOL</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Session Failure Trend */}
+        <div className="card p-4 animate-section flex flex-col" style={{ animationDelay: '0.15s' }}>
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--error)] live-dot" />
+            Session Failure Trend <span className="normal-case text-[var(--text-tertiary)]">(live)</span>
+          </div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">How the failure rate evolves during your browsing session. Spikes indicate sudden congestion or program issues.</div>
+          {accumulated.snapshots.length > 2 ? (() => {
+            const snaps = accumulated.snapshots;
+            const rates = snaps.map(s => s.rate);
+            const maxRate = Math.max(...rates, 0.1) * 1.2;
+            const startTime = snaps[0].time;
+            const endTime = snaps[snaps.length - 1].time;
+            const duration = endTime - startTime || 1;
+            const xPcts = snaps.map(s => ((s.time - startTime) / duration) * 100);
+            const yPcts = rates.map(r => 100 - (r / maxRate) * 100);
+            const avgRate = rates.reduce((s, r) => s + r, 0) / rates.length;
+            const avgYPct = 100 - (avgRate / maxRate) * 100;
+            const cumRate = accumulated.totalTxs > 0 ? (accumulated.totalFailed / accumulated.totalTxs) * 100 : 0;
+            const elapsed = Math.round((endTime - startTime) / 1000);
+            const elapsedStr = elapsed > 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="font-mono text-lg text-[var(--error)]">{cumRate.toFixed(2)}%</div>
+                    <div className="text-[10px] text-[var(--text-tertiary)]">cumulative failure rate</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-sm text-[var(--text-secondary)]">{accumulated.totalFailed.toLocaleString()}</div>
+                    <div className="text-[10px] text-[var(--text-muted)]">failed / {accumulated.totalTxs.toLocaleString()} total</div>
                   </div>
                 </div>
-              );
-            })}
+                <div className="relative rounded-lg bg-[var(--bg-tertiary)]" style={{ height: '80px' }}>
+                  <div className="absolute inset-2">
+                    <div className="absolute left-0 right-0" style={{ top: `${avgYPct}%`, borderTop: '1px dashed var(--accent-secondary)', opacity: 0.3 }}>
+                      <span className="absolute right-0 -top-3 text-[7px] font-mono text-[var(--accent-secondary)]">avg</span>
+                    </div>
+                    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="sessionFailGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--error)" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="var(--error)" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path d={`${xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} L${xPcts[xPcts.length - 1]},100 L${xPcts[0]},100 Z`} fill="url(#sessionFailGrad)" />
+                      <path d={xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} fill="none" stroke="var(--error)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+                    </svg>
+                    <div className="absolute w-2.5 h-2.5 rounded-full bg-[var(--error)] shadow-[0_0_8px_var(--error)] -translate-x-1/2 -translate-y-1/2" style={{ left: `${xPcts[xPcts.length - 1]}%`, top: `${yPcts[yPcts.length - 1]}%` }} />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-1.5 text-[9px] text-[var(--text-muted)]">
+                  <span>{elapsedStr} elapsed</span>
+                  <span>avg {avgRate.toFixed(1)}%</span>
+                  <span>{snaps.length} samples</span>
+                </div>
+              </div>
+            );
+          })() : (
+            <div className="flex flex-col items-center justify-center py-8 gap-2 text-sm text-[var(--text-muted)]">
+              <div className="spinner" style={{ width: 16, height: 16 }} />
+              <span>Collecting data points...</span>
+              <span className="text-[10px] text-[var(--text-tertiary)]">Trend chart appears after a few refreshes</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Top Failing Wallets (collapsible) */}
+      <div className="card animate-section" style={{ animationDelay: '0.2s' }}>
+        <button
+          onClick={() => setShowWallets(!showWallets)}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--bg-secondary)]/50 transition-colors rounded-xl"
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+            <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Top Failing Wallets</span>
+            {accumulated.topPayers.length > 0 && (
+              <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">{accumulated.topPayers.length}</span>
+            )}
           </div>
-        ) : (
-          <div className="text-center text-[var(--text-muted)] py-4 text-sm">No fee payer data available</div>
-        )}
-        {accumulated.topPayers.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-[var(--border-primary)] text-[9px] text-[var(--text-tertiary)]">
-            Wallets sending the most failing transactions this session ({accumulated.totalBlocks} blocks since {accumulated.sessionStart}). Often bots or arbitrage programs.
+          <span className="text-[var(--text-muted)] text-xs transition-transform duration-200" style={{ transform: showWallets ? 'rotate(180deg)' : 'rotate(0deg)' }}>&#9660;</span>
+        </button>
+        {showWallets && (
+          <div className="px-4 pb-4">
+            <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Fee payers with the most failed transactions this session. Could indicate bots, arbitrage attempts, or misconfigured wallets.</div>
+            {accumulated.topPayers.length > 0 ? (
+              <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
+                {accumulated.topPayers.map(([payer, count], idx) => {
+                  const maxCount = accumulated.topPayers[0]?.[1] || 1;
+                  const barPct = (count / maxCount) * 100;
+                  return (
+                    <div key={payer}>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-[var(--text-muted)] w-4">{idx + 1}.</span>
+                          <a
+                            href={getSolscanUrl('account', payer)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-mono text-[var(--accent-secondary)] hover:underline"
+                          >
+                            {payer.slice(0, 6)}...{payer.slice(-4)}
+                          </a>
+                        </div>
+                        <span className="text-xs font-mono text-[var(--error)]">{count}</span>
+                      </div>
+                      <div className="ml-6 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-[var(--accent)]/50" style={{ width: `${barPct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center text-[var(--text-muted)] py-4 text-sm">No fee payer data available</div>
+            )}
           </div>
         )}
       </div>
@@ -2367,6 +2628,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
   const [enhancedTxMap, setEnhancedTxMap] = useState<Map<string, EnhancedTransaction>>(new Map());
   const enhancedFetchedSlotRef = useRef<number | null>(null);
   const [selectedTx, setSelectedTx] = useState<number | null>(null);
+  const [selectedFeeBucket, setSelectedFeeBucket] = useState<number | null>(null);
 
   // Use paused blocks when paused, otherwise live blocks
   const displayBlocks = isPaused ? pausedBlocks : blocks;
@@ -2574,7 +2836,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
     return { success, failed, jito, vote, totalCU, totalFees, topCategories };
   }, [txsForChart]);
 
-  // Fee by position — 20 buckets of non-vote txs, average priority fee + jito tip per bucket
+  // Fee by position — 20 buckets of non-vote txs, average priority fee + jito tip per bucket + summary stats
   const feeByPosition = useMemo(() => {
     if (!selectedBlock?.transactions) return null;
     const nonVoteTxs = selectedBlock.transactions.filter(
@@ -2583,7 +2845,11 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
     if (nonVoteTxs.length === 0) return null;
     const BUCKETS = 20;
     const bucketSize = Math.ceil(nonVoteTxs.length / BUCKETS);
-    const buckets: { start: number; end: number; avgPriority: number; avgJito: number; count: number }[] = [];
+    const buckets: {
+      start: number; end: number; avgPriority: number; avgJito: number; count: number;
+      totalFees: number; totalCU: number; successCount: number; failCount: number;
+      topPrograms: Array<{ prog: string; count: number }>;
+    }[] = [];
     let maxVal = 0;
     for (let b = 0; b < BUCKETS; b++) {
       const start = b * bucketSize;
@@ -2594,7 +2860,19 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
       const avgJito = slice.reduce((s, tx) => s + tx.jitoTip, 0) / slice.length;
       const total = avgPriority + avgJito;
       if (total > maxVal) maxVal = total;
-      buckets.push({ start: start + 1, end, avgPriority, avgJito, count: slice.length });
+      const totalFees = slice.reduce((s, tx) => s + tx.fee, 0);
+      const totalCU = slice.reduce((s, tx) => s + tx.computeUnits, 0);
+      const successCount = slice.filter(tx => tx.success).length;
+      const progMap = new Map<string, number>();
+      for (const tx of slice) {
+        for (const p of tx.programs) {
+          if (p !== 'ComputeBudget111111111111111111111111111111') {
+            progMap.set(p, (progMap.get(p) || 0) + 1);
+          }
+        }
+      }
+      const topPrograms = Array.from(progMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([prog, count]) => ({ prog, count }));
+      buckets.push({ start: start + 1, end, avgPriority, avgJito, count: slice.length, totalFees, totalCU, successCount, failCount: slice.length - successCount, topPrograms });
     }
     return { buckets, maxVal };
   }, [selectedBlock]);
@@ -2646,7 +2924,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
 
   return (
     <section id="deepdive" className="mb-10">
-      <SectionHeader title="Block Explorer" subtitle={`Last ${displayBlocks.length} blocks • click to inspect • hover txs for Helius enriched data`} />
+      <SectionHeader title="Block Explorer" subtitle={`Last ${displayBlocks.length} blocks — click any block to inspect its transactions, fees, and program activity. Hover bars for enriched data.`} />
 
       {/* Block Queue Pipeline */}
       <div className="card p-4 sm:p-6 mb-4">
@@ -2714,7 +2992,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             return (
               <button
                 key={block.slot}
-                onClick={() => { setSelectedSlot(block.slot); setSelectedTx(null); }}
+                onClick={() => { setSelectedSlot(block.slot); setSelectedTx(null); setSelectedFeeBucket(null); }}
                 className={`relative group transition-all duration-200 ${
                   isSelected ? 'z-10' : ''
                 }`}
@@ -2969,7 +3247,8 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
 
         {/* COMPUTE UNITS */}
         <div className="card p-4">
-          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 font-semibold">Compute Units</div>
+          <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-1 font-semibold">Compute Units</div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">How much of the block's 48M CU limit was used. Higher utilization means more competition for block space.</div>
           <div className="space-y-1.5">
             {/* Utilization gauge */}
             <div>
@@ -3198,7 +3477,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                             ...((!isLeftEdge && !isRightEdge) ? { left: '50%' } : {}),
                           }}
                         >
-                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl text-[9px]" style={{ minWidth: '260px', maxWidth: '320px', whiteSpace: 'normal' }}>
+                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl text-[9px]" style={{ minWidth: '260px', maxWidth: '320px', whiteSpace: 'normal' }}>
                             {/* Row 1: Position, Status, Type */}
                             <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                               <span className="font-mono font-bold text-[var(--text-primary)]">#{i + 1}</span>
@@ -3444,7 +3723,8 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                 {/* Left: Fee Breakdown */}
                 <div className="bg-[var(--bg-secondary)]/50 rounded-lg p-3 border border-[var(--border-primary)]">
-                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-2 font-semibold">Fee Breakdown</div>
+                  <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-wider mb-1 font-semibold">Fee Breakdown</div>
+                  <div className="text-[9px] text-[var(--text-tertiary)] mb-2">Base fee (5k L per sig) + priority tip + optional Jito tip</div>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-[var(--text-muted)]">Base Fee</span>
@@ -3538,68 +3818,127 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
         })()}
       </div>
 
-      {/* Fee by Position — vertical bars below the 3-col grid */}
+      {/* Fee by Position — interactive chart with section summaries */}
       {feeByPosition && feeByPosition.buckets.length > 0 && (
         <div className="card p-4 mt-4 mb-4">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-1">
             <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
               Fee by Position
-              <span className="normal-case text-[var(--text-tertiary)] text-[10px]">(avg fee per tx-position bucket)</span>
             </div>
             <div className="flex items-center gap-3 text-[9px] text-[var(--text-muted)]">
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent)]" />
-                Priority
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent-tertiary)]" />
-                Jito
-              </div>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent)]" /> Priority</span>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent-tertiary)]" /> Jito</span>
+              {selectedFeeBucket !== null && (
+                <button onClick={() => setSelectedFeeBucket(null)} className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors">&times; clear</button>
+              )}
             </div>
           </div>
-          <div className="relative h-36">
-            {/* Y-axis label */}
-            <div className="absolute left-0 top-0 text-[8px] font-mono text-[var(--text-muted)]">{formatNumber(Math.round(feeByPosition.maxVal))} L</div>
-            {/* Bars */}
-            <div className="absolute left-10 right-0 top-0 bottom-4 flex items-end gap-px">
-              {feeByPosition.buckets.map((bucket, i) => {
-                const total = bucket.avgPriority + bucket.avgJito;
-                const heightPct = feeByPosition.maxVal > 0 ? (total / feeByPosition.maxVal) * 100 : 0;
-                const priorityPct = total > 0 ? (bucket.avgPriority / total) * 100 : 100;
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-stretch group relative cursor-default" style={{ height: '100%' }}>
-                    <div className="flex-1" />
-                    <div className="flex flex-col rounded-t-sm overflow-hidden" style={{ height: `${Math.max(heightPct, 1)}%` }}>
-                      <div className="flex-1 bg-[var(--accent-tertiary)]" style={{ height: `${100 - priorityPct}%` }} />
-                      <div className="flex-1 bg-[var(--accent)]" style={{ height: `${priorityPct}%` }} />
-                    </div>
-                    {/* Tooltip */}
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Transactions ordered by position in block. Early = higher priority fees. Click any bar to see a summary of that section.</div>
+
+          <div className="flex items-end gap-[2px]" style={{ height: '120px' }}>
+            {feeByPosition.buckets.map((bucket, i) => {
+              const total = bucket.avgPriority + bucket.avgJito;
+              const heightPct = feeByPosition.maxVal > 0 ? (total / feeByPosition.maxVal) * 100 : 0;
+              const priorityPct = total > 0 ? (bucket.avgPriority / total) * 100 : 100;
+              const isSelected = selectedFeeBucket === i;
+              return (
+                <div
+                  key={i}
+                  className="flex-1 group relative cursor-pointer transition-all duration-150"
+                  style={{ height: '100%' }}
+                  onClick={() => setSelectedFeeBucket(isSelected ? null : i)}
+                >
+                  <div className="absolute bottom-0 left-0 right-0 flex flex-col rounded-t overflow-hidden transition-opacity duration-150" style={{
+                    height: `${Math.max(heightPct, 2)}%`,
+                    opacity: selectedFeeBucket !== null && !isSelected ? 0.3 : 1,
+                    outline: isSelected ? '1.5px solid var(--accent)' : 'none',
+                    outlineOffset: '-1px',
+                  }}>
+                    {bucket.avgJito > 0 && (
+                      <div className="bg-[var(--accent-tertiary)]" style={{ height: `${100 - priorityPct}%`, minHeight: '1px' }} />
+                    )}
+                    <div className="bg-[var(--accent)] flex-1" />
+                  </div>
+                  {/* Hover tooltip (only when not selected) */}
+                  {selectedFeeBucket === null && (
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                      <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                        <div className="font-medium text-[var(--text-primary)] mb-0.5">Position {bucket.start}–{bucket.end}</div>
-                        <div className="text-[var(--text-muted)]">Priority: <span className="font-mono text-[var(--accent)]">{formatNumber(Math.round(bucket.avgPriority))} L</span></div>
-                        <div className="text-[var(--text-muted)]">Jito: <span className="font-mono text-[var(--accent-tertiary)]">{formatNumber(Math.round(bucket.avgJito))} L</span></div>
-                        <div className="text-[var(--text-muted)]">Total: <span className="font-mono text-[var(--text-primary)]">{formatNumber(Math.round(total))} L</span></div>
+                      <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
+                        <div className="font-medium text-[var(--text-primary)] mb-0.5">Txs {bucket.start}–{bucket.end}</div>
+                        <div className="text-[var(--text-muted)]">Avg fee: <span className="font-mono text-[var(--text-primary)]">{formatNumber(Math.round(total))} L</span></div>
+                        <div className="text-[8px] text-[var(--text-tertiary)] mt-0.5">click for details</div>
                       </div>
                     </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* X-axis */}
+          <div className="flex justify-between mt-1 text-[8px] text-[var(--text-muted)]">
+            <span>Early in block <span className="text-[var(--text-tertiary)]">(high priority)</span></span>
+            <span>Late in block <span className="text-[var(--text-tertiary)]">(lower priority)</span></span>
+          </div>
+
+          {/* Selected bucket summary */}
+          {selectedFeeBucket !== null && (() => {
+            const bucket = feeByPosition.buckets[selectedFeeBucket];
+            if (!bucket) return null;
+            const successRate = bucket.count > 0 ? (bucket.successCount / bucket.count) * 100 : 0;
+            const avgCU = bucket.count > 0 ? bucket.totalCU / bucket.count : 0;
+            return (
+              <div className="mt-3 pt-3 border-t border-[var(--border-primary)] animate-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Section Summary</span>
+                  <span className="text-[10px] font-mono text-[var(--text-secondary)]">Txs {bucket.start}–{bucket.end}</span>
+                  <span className="text-[9px] text-[var(--text-tertiary)]">({bucket.count} transactions)</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg Priority</div>
+                    <div className="font-mono text-sm text-[var(--accent)]">{formatNumber(Math.round(bucket.avgPriority))} <span className="text-[10px] text-[var(--text-muted)]">L</span></div>
                   </div>
-                );
-              })}
-            </div>
-            {/* X-axis labels */}
-            <div className="absolute left-10 right-0 bottom-0 flex justify-between text-[8px] font-mono text-[var(--text-muted)]">
-              <span>1st</span>
-              <span className="text-[var(--text-tertiary)]">1/3</span>
-              <span className="text-[var(--text-tertiary)]">2/3</span>
-              <span>Last</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-1 text-[9px] text-[var(--text-tertiary)]">
-            <span>Early in block (high priority)</span>
-            <span>Tx position →</span>
-            <span>Late in block (lower priority)</span>
-          </div>
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg Jito Tip</div>
+                    <div className="font-mono text-sm text-[var(--accent-tertiary)]">{bucket.avgJito > 0 ? formatNumber(Math.round(bucket.avgJito)) : '—'} <span className="text-[10px] text-[var(--text-muted)]">{bucket.avgJito > 0 ? 'L' : ''}</span></div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Total Fees</div>
+                    <div className="font-mono text-sm text-[var(--text-secondary)]">{(bucket.totalFees / 1e9).toFixed(6)} <span className="text-[10px] text-[var(--text-muted)]">SOL</span></div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg CU</div>
+                    <div className="font-mono text-sm text-[var(--text-secondary)]">{formatCU(Math.round(avgCU))}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Success Rate</div>
+                    <div className="font-mono text-sm" style={{ color: successRate >= 90 ? 'var(--success)' : successRate >= 70 ? 'var(--warning)' : 'var(--error)' }}>
+                      {successRate.toFixed(1)}%
+                      {bucket.failCount > 0 && <span className="text-[10px] text-[var(--text-muted)]"> ({bucket.failCount} failed)</span>}
+                    </div>
+                  </div>
+                </div>
+                {bucket.topPrograms.length > 0 && (
+                  <div>
+                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1.5">Top Programs in Section</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {bucket.topPrograms.map(({ prog, count }) => {
+                        const info = getProgramInfo(prog);
+                        return (
+                          <span key={prog} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[var(--bg-tertiary)]">
+                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: info.color }} />
+                            <span className="text-[var(--text-secondary)]">{info.name}</span>
+                            <span className="font-mono text-[var(--text-muted)]">{count}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -3611,6 +3950,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             <span className="text-[10px] text-[var(--text-tertiary)]">{programBreakdown.totalNonVote} non-vote txs</span>
           )}
         </div>
+        <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Most active programs in this block (excluding vote transactions). Shows how much compute and fees each program consumed.</div>
         {programBreakdown && programBreakdown.programs.length > 0 ? (
           <>
             {/* Column headers */}
@@ -3669,6 +4009,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
   const [page, setPage] = useState(0);
   const [expandedValidator, setExpandedValidator] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [barFilter, setBarFilter] = useState<{ cat: string; key: string } | null>(null);
 
   // Aggregate stats across all validators
   const aggregateStats = useMemo(() => {
@@ -3727,15 +4068,46 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
   const delinquentCount = validators.filter(v => v.delinquent).length;
 
   const filteredValidators = useMemo(() => {
-    if (!searchQuery.trim()) return validators;
-    const q = searchQuery.toLowerCase();
-    return validators.filter(v => {
-      const name = getValidatorName(v.votePubkey)?.toLowerCase() || '';
-      const meta = getValidatorMetadata(v.votePubkey);
-      const metaName = meta?.name?.toLowerCase() || '';
-      return name.includes(q) || metaName.includes(q) || v.votePubkey.toLowerCase().includes(q) || v.nodePubkey.toLowerCase().includes(q);
-    });
-  }, [validators, searchQuery, getValidatorName, getValidatorMetadata]);
+    let result = validators;
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(v => {
+        const name = getValidatorName(v.votePubkey)?.toLowerCase() || '';
+        const meta = getValidatorMetadata(v.votePubkey);
+        const metaName = meta?.name?.toLowerCase() || '';
+        return name.includes(q) || metaName.includes(q) || v.votePubkey.toLowerCase().includes(q) || v.nodePubkey.toLowerCase().includes(q);
+      });
+    }
+
+    // Bar filter from Network Health Overview clicks
+    if (barFilter) {
+      result = result.filter(v => {
+        if (barFilter.cat === 'health') {
+          const h = computeHealthScore(v, production ?? null, currentSlot);
+          return h.grade === barFilter.key;
+        }
+        if (barFilter.cat === 'skip') {
+          const prod = production?.byIdentity?.[v.nodePubkey];
+          const skip = prod ? ((prod[0] - prod[1]) / prod[0]) * 100 : 0;
+          if (barFilter.key === '<2%') return skip < 2;
+          if (barFilter.key === '2-5%') return skip >= 2 && skip < 5;
+          if (barFilter.key === '5-10%') return skip >= 5 && skip < 10;
+          if (barFilter.key === '>10%') return skip >= 10;
+        }
+        if (barFilter.cat === 'commission') {
+          if (barFilter.key === '0%') return v.commission === 0;
+          if (barFilter.key === '1-5%') return v.commission >= 1 && v.commission <= 5;
+          if (barFilter.key === '5-10%') return v.commission > 5 && v.commission <= 10;
+          if (barFilter.key === '>10%') return v.commission > 10;
+        }
+        return true;
+      });
+    }
+
+    return result;
+  }, [validators, searchQuery, getValidatorName, getValidatorMetadata, barFilter, production, currentSlot]);
 
   const totalPages = Math.ceil(filteredValidators.length / PAGE_SIZE);
   const safePageNum = Math.min(page, Math.max(0, totalPages - 1));
@@ -3743,27 +4115,45 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
   const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredValidators.length);
   const pageValidators = filteredValidators.slice(pageStart, pageEnd);
 
-  // Stacked bar helper
-  const StackedBar = ({ segments, height = 8 }: { segments: Array<{ value: number; color: string; label: string }>; height?: number }) => {
+  // Stacked bar helper — interactive when onSegmentClick provided
+  const StackedBar = ({ segments, height = 8, onSegmentClick, activeKey }: {
+    segments: Array<{ value: number; color: string; label: string; key?: string }>;
+    height?: number;
+    onSegmentClick?: (key: string) => void;
+    activeKey?: string | null;
+  }) => {
     const total = segments.reduce((s, seg) => s + seg.value, 0);
     if (total === 0) return null;
+    const clickable = !!onSegmentClick;
     return (
       <div className="flex rounded-full overflow-hidden" style={{ height }}>
-        {segments.filter(s => s.value > 0).map((seg, i) => (
-          <div
-            key={i}
-            title={`${seg.label}: ${seg.value} (${((seg.value / total) * 100).toFixed(1)}%)`}
-            className="transition-all duration-300 first:rounded-l-full last:rounded-r-full"
-            style={{ width: `${(seg.value / total) * 100}%`, backgroundColor: seg.color }}
-          />
-        ))}
+        {segments.filter(s => s.value > 0).map((seg, i) => {
+          const segKey = seg.key || seg.label;
+          const isActive = activeKey === segKey;
+          const isDimmed = activeKey != null && !isActive;
+          return (
+            <div
+              key={i}
+              title={`${seg.label}: ${seg.value} (${((seg.value / total) * 100).toFixed(1)}%)`}
+              className={`transition-all duration-300 first:rounded-l-full last:rounded-r-full ${clickable ? 'cursor-pointer hover:brightness-125' : ''}`}
+              style={{
+                width: `${(seg.value / total) * 100}%`,
+                backgroundColor: seg.color,
+                opacity: isDimmed ? 0.3 : 1,
+                outline: isActive ? '2px solid white' : 'none',
+                outlineOffset: '-1px',
+              }}
+              onClick={clickable ? () => onSegmentClick!(segKey) : undefined}
+            />
+          );
+        })}
       </div>
     );
   };
 
   return (
     <section className="mb-10">
-      <SectionHeader title="Validators" subtitle={`${validators.length} total • ranked by stake`} />
+      <SectionHeader title="Validators" subtitle={`${validators.length} validators ranked by stake weight. Health scores combine skip rate, commission, and uptime into a single 0-100 metric.`} />
 
       {/* Summary Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -3773,10 +4163,23 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
         <StatCard label="Delinquent" value={delinquentCount.toString()} subtext={`${((delinquentCount / validators.length) * 100).toFixed(1)}% of validators`} color={delinquentCount === 0 ? 'green' : undefined} />
       </div>
 
-      {/* Aggregate Health Overview — Stacked Bars */}
+      {/* Aggregate Health Overview — Interactive Stacked Bars */}
       {aggregateStats && (
         <div className="card p-4 mb-4">
-          <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-3">Network Health Overview</div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Network Health Overview</div>
+              <div className="text-[10px] text-[var(--text-tertiary)] mt-0.5">Click any bar segment to filter the validator table below. Health score = weighted composite of skip rate, commission, and stake.</div>
+            </div>
+            {barFilter && (
+              <button
+                onClick={() => { setBarFilter(null); setPage(0); }}
+                className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] rounded-full bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25 transition-colors"
+              >
+                Filtered: {barFilter.cat} {barFilter.key} <span className="text-[var(--text-muted)]">&times;</span>
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Health Grade Distribution */}
             <div>
@@ -3784,13 +4187,17 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                 <span className="text-[10px] text-[var(--text-tertiary)]">Health Grades</span>
                 <span className="text-[10px] font-mono text-[var(--text-secondary)]">avg {aggregateStats.avgScore}</span>
               </div>
-              <StackedBar segments={[
-                { value: aggregateStats.grades.A, color: 'var(--success)', label: `A (${aggregateStats.grades.A})` },
-                { value: aggregateStats.grades.B, color: 'var(--accent-secondary)', label: `B (${aggregateStats.grades.B})` },
-                { value: aggregateStats.grades.C, color: 'var(--warning)', label: `C (${aggregateStats.grades.C})` },
-                { value: aggregateStats.grades.D, color: 'var(--accent)', label: `D (${aggregateStats.grades.D})` },
-                { value: aggregateStats.grades.F, color: 'var(--error)', label: `F (${aggregateStats.grades.F})` },
-              ]} />
+              <StackedBar
+                onSegmentClick={(key) => { setBarFilter(f => f?.cat === 'health' && f.key === key ? null : { cat: 'health', key }); setPage(0); }}
+                activeKey={barFilter?.cat === 'health' ? barFilter.key : null}
+                segments={[
+                  { value: aggregateStats.grades.A, color: 'var(--success)', label: `A (${aggregateStats.grades.A})`, key: 'A' },
+                  { value: aggregateStats.grades.B, color: 'var(--accent-secondary)', label: `B (${aggregateStats.grades.B})`, key: 'B' },
+                  { value: aggregateStats.grades.C, color: 'var(--warning)', label: `C (${aggregateStats.grades.C})`, key: 'C' },
+                  { value: aggregateStats.grades.D, color: 'var(--accent)', label: `D (${aggregateStats.grades.D})`, key: 'D' },
+                  { value: aggregateStats.grades.F, color: 'var(--error)', label: `F (${aggregateStats.grades.F})`, key: 'F' },
+                ]}
+              />
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {[
                   { grade: 'A', count: aggregateStats.grades.A, color: 'var(--success)' },
@@ -3799,7 +4206,11 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                   { grade: 'D', count: aggregateStats.grades.D, color: 'var(--accent)' },
                   { grade: 'F', count: aggregateStats.grades.F, color: 'var(--error)' },
                 ].filter(g => g.count > 0).map(g => (
-                  <span key={g.grade} className="flex items-center gap-1 text-[9px]">
+                  <span
+                    key={g.grade}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'health' && barFilter.key === g.grade ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    onClick={() => { setBarFilter(f => f?.cat === 'health' && f.key === g.grade ? null : { cat: 'health', key: g.grade }); setPage(0); }}
+                  >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: g.color }} />
                     <span className="text-[var(--text-muted)]">{g.grade}</span>
                     <span className="font-mono text-[var(--text-tertiary)]">{g.count}</span>
@@ -3813,12 +4224,16 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-[var(--text-tertiary)]">Skip Rate Distribution</span>
               </div>
-              <StackedBar segments={[
-                { value: aggregateStats.skipBuckets.low, color: 'var(--success)', label: `<2% (${aggregateStats.skipBuckets.low})` },
-                { value: aggregateStats.skipBuckets.medium, color: 'var(--accent-secondary)', label: `2-5% (${aggregateStats.skipBuckets.medium})` },
-                { value: aggregateStats.skipBuckets.high, color: 'var(--warning)', label: `5-10% (${aggregateStats.skipBuckets.high})` },
-                { value: aggregateStats.skipBuckets.critical, color: 'var(--error)', label: `>10% (${aggregateStats.skipBuckets.critical})` },
-              ]} />
+              <StackedBar
+                onSegmentClick={(key) => { setBarFilter(f => f?.cat === 'skip' && f.key === key ? null : { cat: 'skip', key }); setPage(0); }}
+                activeKey={barFilter?.cat === 'skip' ? barFilter.key : null}
+                segments={[
+                  { value: aggregateStats.skipBuckets.low, color: 'var(--success)', label: `<2% (${aggregateStats.skipBuckets.low})`, key: '<2%' },
+                  { value: aggregateStats.skipBuckets.medium, color: 'var(--accent-secondary)', label: `2-5% (${aggregateStats.skipBuckets.medium})`, key: '2-5%' },
+                  { value: aggregateStats.skipBuckets.high, color: 'var(--warning)', label: `5-10% (${aggregateStats.skipBuckets.high})`, key: '5-10%' },
+                  { value: aggregateStats.skipBuckets.critical, color: 'var(--error)', label: `>10% (${aggregateStats.skipBuckets.critical})`, key: '>10%' },
+                ]}
+              />
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {[
                   { label: '<2%', count: aggregateStats.skipBuckets.low, color: 'var(--success)' },
@@ -3826,7 +4241,11 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                   { label: '5-10%', count: aggregateStats.skipBuckets.high, color: 'var(--warning)' },
                   { label: '>10%', count: aggregateStats.skipBuckets.critical, color: 'var(--error)' },
                 ].filter(s => s.count > 0).map(s => (
-                  <span key={s.label} className="flex items-center gap-1 text-[9px]">
+                  <span
+                    key={s.label}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'skip' && barFilter.key === s.label ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    onClick={() => { setBarFilter(f => f?.cat === 'skip' && f.key === s.label ? null : { cat: 'skip', key: s.label }); setPage(0); }}
+                  >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: s.color }} />
                     <span className="text-[var(--text-muted)]">{s.label}</span>
                     <span className="font-mono text-[var(--text-tertiary)]">{s.count}</span>
@@ -3840,12 +4259,16 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-[var(--text-tertiary)]">Commission Distribution</span>
               </div>
-              <StackedBar segments={[
-                { value: aggregateStats.commBuckets.zero, color: 'var(--success)', label: `0% (${aggregateStats.commBuckets.zero})` },
-                { value: aggregateStats.commBuckets.low, color: 'var(--accent-secondary)', label: `1-5% (${aggregateStats.commBuckets.low})` },
-                { value: aggregateStats.commBuckets.medium, color: 'var(--warning)', label: `5-10% (${aggregateStats.commBuckets.medium})` },
-                { value: aggregateStats.commBuckets.high, color: 'var(--error)', label: `>10% (${aggregateStats.commBuckets.high})` },
-              ]} />
+              <StackedBar
+                onSegmentClick={(key) => { setBarFilter(f => f?.cat === 'commission' && f.key === key ? null : { cat: 'commission', key }); setPage(0); }}
+                activeKey={barFilter?.cat === 'commission' ? barFilter.key : null}
+                segments={[
+                  { value: aggregateStats.commBuckets.zero, color: 'var(--success)', label: `0% (${aggregateStats.commBuckets.zero})`, key: '0%' },
+                  { value: aggregateStats.commBuckets.low, color: 'var(--accent-secondary)', label: `1-5% (${aggregateStats.commBuckets.low})`, key: '1-5%' },
+                  { value: aggregateStats.commBuckets.medium, color: 'var(--warning)', label: `5-10% (${aggregateStats.commBuckets.medium})`, key: '5-10%' },
+                  { value: aggregateStats.commBuckets.high, color: 'var(--error)', label: `>10% (${aggregateStats.commBuckets.high})`, key: '>10%' },
+                ]}
+              />
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {[
                   { label: '0%', count: aggregateStats.commBuckets.zero, color: 'var(--success)' },
@@ -3853,7 +4276,11 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                   { label: '5-10%', count: aggregateStats.commBuckets.medium, color: 'var(--warning)' },
                   { label: '>10%', count: aggregateStats.commBuckets.high, color: 'var(--error)' },
                 ].filter(s => s.count > 0).map(s => (
-                  <span key={s.label} className="flex items-center gap-1 text-[9px]">
+                  <span
+                    key={s.label}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'commission' && barFilter.key === s.label ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    onClick={() => { setBarFilter(f => f?.cat === 'commission' && f.key === s.label ? null : { cat: 'commission', key: s.label }); setPage(0); }}
+                  >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: s.color }} />
                     <span className="text-[var(--text-muted)]">{s.label}</span>
                     <span className="font-mono text-[var(--text-tertiary)]">{s.count}</span>
@@ -3862,7 +4289,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
               </div>
             </div>
 
-            {/* Stake Concentration */}
+            {/* Stake Concentration — not interactive (doesn't map cleanly to individual validators) */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-[var(--text-tertiary)]">Stake Concentration</span>
@@ -3899,7 +4326,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
         {/* Pagination Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/30 gap-3">
           <span className="text-xs text-[var(--text-muted)] flex-shrink-0">
-            {searchQuery ? `${filteredValidators.length} of ${validators.length}` : `${pageStart + 1}–${pageEnd} of ${validators.length}`}
+            {(searchQuery || barFilter) ? `${filteredValidators.length} of ${validators.length}` : `${pageStart + 1}–${pageEnd} of ${validators.length}`}
           </span>
           <input
             type="text"
@@ -3982,7 +4409,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                       <HealthGauge score={h.score} grade={h.grade} size={32} />
                       {/* Hover tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-40 pointer-events-none">
-                        <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                        <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
                           <div className="font-medium text-[var(--text-primary)] mb-1">Health Score: <span style={{ color: GRADE_COLORS[h.grade] }}>{h.score} ({h.grade})</span></div>
                           <div className="space-y-0.5 text-[var(--text-muted)]">
                             <div>Skip rate (40%): <span className="font-mono" style={{ color: h.skipScore >= 80 ? 'var(--success)' : h.skipScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{h.skipScore}</span></div>
@@ -4057,7 +4484,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
 function NetworkLimitsSection() {
   return (
     <section id="limits" className="pt-6 border-t border-[var(--border-primary)]">
-      <SectionHeader title="Network Limits & Compute Units" subtitle="Post-SIMD upgrades" />
+      <SectionHeader title="Network Limits & Compute Units" subtitle="Current Solana protocol limits — block size, compute units, and fee structure. Updated with SIMD proposals." />
 
       {/* Core Protocol Limits */}
       <div className="mb-6">
@@ -4308,7 +4735,7 @@ function ValidatorGeography({ validatorLocations }: {
 
   return (
     <section className="mb-10">
-      <SectionHeader title="Geographic Distribution" subtitle={`${totalValidators} nodes indexed (active + inactive)`} />
+      <SectionHeader title="Geographic Distribution" subtitle={`${totalValidators} nodes indexed — physical locations of validator infrastructure. Concentration in few regions is a decentralization risk.`} />
 
       <div className="grid md:grid-cols-2 gap-4">
         {/* Top Countries */}
