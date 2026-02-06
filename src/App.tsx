@@ -24,7 +24,7 @@ import {
 } from './hooks/useSolanaData';
 import type { SlotData, LeaderScheduleInfo, ValidatorMetadata, EpochNetworkStats, EnhancedTransaction, BlockProductionInfo, NetworkStats, SupplyInfo, ValidatorInfo, InflationInfo, ClusterInfo, NetworkHistoryData } from './hooks/useSolanaData';
 import type { TransactionInfo } from './hooks/useSolanaData';
-import { fetchEnhancedTransactions } from './hooks/useSolanaData';
+import { fetchEnhancedTransactions, fetchEpochStats } from './hooks/useSolanaData';
 
 // Generate a gradient color based on pubkey for avatar fallback
 function getAvatarGradient(pubkey: string): string {
@@ -94,7 +94,7 @@ function App() {
 
   const { validatorInfo: topValidators } = useTopValidators(0);
   const { getName: getValidatorName, getMetadata: getValidatorMetadata } = useValidatorNames();
-  const networkHistory = useNetworkHistory(5);
+  const networkHistory = useNetworkHistory(50);
   const { locations: validatorLocations } = useValidatorLocations();
   // Failure accumulation — lifted to App level so data persists across page navigation
   const processedSlotsRef = useRef<Set<number>>(new Set());
@@ -480,7 +480,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       </section>
 
       {/* Epoch Summary */}
-      <EpochSummaryCards data={networkHistory} />
+      <NetworkHistorySection data={networkHistory} />
 
       {/* Validators & Network */}
       <section className="mb-8 sm:mb-10">
@@ -709,6 +709,7 @@ const formatCompact = (num: number) => {
   return num.toLocaleString();
 };
 
+// Epoch-over-epoch trend computation
 const getTrend = (values: number[]) => {
   if (values.length < 2) return { direction: 'flat' as const, pct: 0 };
   const last = values[values.length - 1];
@@ -816,14 +817,76 @@ function HealthGauge({ score, grade, size = 48 }: { score: number; grade: Health
 
 type EpochAnalyticsData = { currentEpoch: EpochNetworkStats | null; previousEpochs: EpochNetworkStats[]; isLoading: boolean; error: string | null };
 
-// Epoch Summary Cards - top-level overview for Dashboard
-function EpochSummaryCards({ data }: { data: EpochAnalyticsData }) {
+// Comprehensive Epoch Summary - unified view with stats, breakdowns, and comparison table
+function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
+  const [tablePage, setTablePage] = useState(0);
+  const [epochSearch, setEpochSearch] = useState('');
+  const [searchResult, setSearchResult] = useState<EpochNetworkStats | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const ROWS_PER_PAGE = 10;
+
+  // Hooks must be before early returns
+  const allEpochs = useMemo(() => {
+    if (!data.currentEpoch) return [];
+    return [data.currentEpoch, ...data.previousEpochs];
+  }, [data.currentEpoch, data.previousEpochs]);
+
+  const averages = useMemo(() => {
+    if (allEpochs.length === 0) return null;
+    const len = allEpochs.length;
+    return {
+      totalTransactions: allEpochs.reduce((s, e) => s + e.totalTransactions, 0) / len,
+      nonVoteTransactions: allEpochs.reduce((s, e) => s + e.nonVoteTransactions, 0) / len,
+      failedTx: allEpochs.reduce((s, e) => s + e.failedTx, 0) / len,
+      successRate: allEpochs.reduce((s, e) => s + e.successRate, 0) / len,
+      avgBlockTime: allEpochs.reduce((s, e) => s + e.avgBlockTime, 0) / len,
+      skipRate: allEpochs.reduce((s, e) => s + e.skipRate, 0) / len,
+      avgCUPerBlock: allEpochs.reduce((s, e) => s + e.avgCUPerBlock, 0) / len,
+      totalFees: allEpochs.reduce((s, e) => s + e.totalFees, 0) / len,
+      jitoTips: allEpochs.reduce((s, e) => s + e.jitoTips, 0) / len,
+    };
+  }, [allEpochs]);
+
+  // End date of epoch N = start date of epoch N+1 (allEpochs is sorted newest first)
+  const epochEndDates = useMemo(() => {
+    const map = new Map<number, string>();
+    for (let i = 1; i < allEpochs.length; i++) {
+      map.set(allEpochs[i].epoch, allEpochs[i - 1].startedAt);
+    }
+    return map;
+  }, [allEpochs]);
+
+  const totalPages = Math.ceil(allEpochs.length / ROWS_PER_PAGE);
+  const pagedEpochs = allEpochs.slice(tablePage * ROWS_PER_PAGE, (tablePage + 1) * ROWS_PER_PAGE);
+
+  const handleEpochSearch = async () => {
+    const num = parseInt(epochSearch.trim());
+    if (isNaN(num) || num < 0) { setSearchError('Enter a valid epoch number'); return; }
+    const existing = allEpochs.find(e => e.epoch === num);
+    if (existing) {
+      const idx = allEpochs.indexOf(existing);
+      setTablePage(Math.floor(idx / ROWS_PER_PAGE));
+      setSearchResult(null);
+      setSearchError('');
+      return;
+    }
+    setSearchLoading(true);
+    setSearchError('');
+    setSearchResult(null);
+    try {
+      const result = await fetchEpochStats(num);
+      if (result) { setSearchResult(result); } else { setSearchError(`Epoch ${num} not found`); }
+    } catch { setSearchError('Failed to fetch epoch'); }
+    setSearchLoading(false);
+  };
+
   if (data.isLoading) {
     return (
-      <section id="epoch" className="mb-10">
-        <SectionHeader title="Epoch Analytics" subtitle="Loading..." />
+      <section className="mb-10">
+        <SectionHeader title="Epoch Analytics" subtitle="Loading historical data..." />
         <div className="card p-6">
-          <div className="flex items-center justify-center py-12 gap-3">
+          <div className="flex items-center justify-center py-8 gap-3">
             <div className="spinner" />
             <span className="text-[var(--text-muted)]">Fetching epoch data from Solana Compass...</span>
           </div>
@@ -832,214 +895,109 @@ function EpochSummaryCards({ data }: { data: EpochAnalyticsData }) {
     );
   }
 
-  if (data.error || !data.currentEpoch) return null;
+  if (data.error || !data.currentEpoch) {
+    return (
+      <section className="mb-10">
+        <SectionHeader title="Epoch Analytics" subtitle="Historical network data" />
+        <div className="card p-6 text-center py-8">
+          <div className="text-[var(--text-muted)]">Unable to load historical data</div>
+        </div>
+      </section>
+    );
+  }
 
   const current = data.currentEpoch;
-  const allEpochs = [current, ...data.previousEpochs];
-  const reversed = allEpochs.slice().reverse();
 
-  const maxTx = Math.max(...allEpochs.map(e => e.totalTransactions));
-  const maxFees = Math.max(...allEpochs.map(e => e.totalFees));
-  const maxJito = Math.max(...allEpochs.map(e => e.jitoTips));
-  const totalFeesAndTips = current.totalFees + current.jitoTips;
+  const formatEpochDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+  const formatEpochDateFull = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
+  };
+
+  const EpochRow = ({ epoch, isCurrent, isSearch, endDate }: { epoch: EpochNetworkStats; isCurrent: boolean; isSearch: boolean; endDate?: string }) => {
+    const cuFill = (epoch.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+    const wastedCU = SOLANA_LIMITS.BLOCK_CU_LIMIT - epoch.avgCUPerBlock;
+    const failRate = (100 - epoch.successRate);
+    return (
+      <tr className={`border-b border-[var(--border-primary)] table-row-hover ${isCurrent ? 'bg-[var(--accent)]/5' : ''} ${isSearch ? 'bg-[var(--accent-secondary)]/5' : ''}`}>
+        <td className="py-2 pr-3 font-mono whitespace-nowrap">
+          <a href={`https://solanacompass.com/epochs/${epoch.epoch}`} target="_blank" rel="noopener noreferrer" className={`hover:underline ${isCurrent ? 'text-[var(--accent)] font-medium' : isSearch ? 'text-[var(--accent-secondary)] font-medium' : 'text-[var(--text-secondary)] hover:text-[var(--accent-secondary)]'}`}>
+            {epoch.epoch}
+          </a>
+          {isCurrent && <span className="text-[10px] text-[var(--text-muted)] ml-1">(live)</span>}
+          {isSearch && <span className="text-[10px] text-[var(--accent-secondary)] ml-1">(search)</span>}
+        </td>
+        <td className="py-2 pr-3 text-right text-[10px] text-[var(--text-muted)] whitespace-nowrap" title={`Started: ${formatEpochDateFull(epoch.startedAt)}${endDate ? ' — Ended: ' + formatEpochDateFull(endDate) : ' — In progress'}`}>
+          {formatEpochDate(epoch.startedAt)} – {isCurrent ? <span className="text-[var(--accent)] italic">now</span> : endDate ? formatEpochDate(endDate) : '?'}
+        </td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--text-secondary)]" title={`Vote: ${formatCompact(epoch.voteTransactions)} | Non-vote: ${formatCompact(epoch.nonVoteTransactions)}`}>{formatCompact(epoch.totalTransactions)}</td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--text-tertiary)]" title="User transactions (excludes validator consensus votes)">{formatCompact(epoch.nonVoteTransactions)}</td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--error)]" title={`${formatCompact(epoch.failedTx)} failed out of ${formatCompact(epoch.totalTransactions)} total`}>
+          {formatCompact(epoch.failedTx)} <span className="text-[var(--text-muted)]">({failRate.toFixed(1)}%)</span>
+        </td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--success)]" title="Percentage of transactions that completed successfully">{epoch.successRate.toFixed(1)}%</td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--text-secondary)]" title="Average time between blocks (target: 400ms)">{epoch.avgBlockTime.toFixed(0)}ms</td>
+        <td className="py-2 pr-3 text-right font-mono" style={{ color: epoch.skipRate > 5 ? 'var(--warning)' : 'var(--text-tertiary)' }} title="Percentage of assigned slots where the leader failed to produce a block">{epoch.skipRate.toFixed(2)}%</td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--text-secondary)]" title={`Avg compute units per block. Wasted: ${formatCU(wastedCU)}/block (${(100 - cuFill).toFixed(1)}% unused)`}>{formatCU(epoch.avgCUPerBlock)}</td>
+        <td className="py-2 pr-3 text-right font-mono" style={{ color: cuFill > 60 ? 'var(--warning)' : 'var(--success)' }} title={`Block capacity used. Max: ${formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)} CU/block`}>{cuFill.toFixed(1)}%</td>
+        <td className="py-2 pr-3 text-right font-mono text-[var(--accent)]" title={`Base: ${formatSOL(epoch.baseFees)} + Priority: ${formatSOL(epoch.priorityFees)} SOL`}>{formatSOL(epoch.totalFees)}</td>
+        <td className="py-2 text-right font-mono text-[var(--accent-tertiary)]" title={`${formatCompact(epoch.jitoTransactions)} Jito bundles, avg tip: ${formatSOL(epoch.avgJitoTip)} SOL`}>{formatSOL(epoch.jitoTips)}</td>
+      </tr>
+    );
+  };
 
   return (
-    <section id="epoch" className="mb-10">
-      <SectionHeader title="Epoch Analytics" subtitle={`Epoch ${current.epoch} • ${allEpochs.length} epochs • Solana Compass`} />
-      <div className="text-[10px] text-[var(--text-tertiary)] mb-4 -mt-2 flex items-center gap-2 flex-wrap">
-        <span>Each epoch spans ~2-3 days (432,000 slots).</span>
-        <span className="text-[var(--border-secondary)]">|</span>
-        <span>Epoch {current.epoch} progress: {current.totalTransactions > 0 ? formatCompact(current.totalTransactions) : '—'} transactions processed.</span>
-      </div>
-
-      {/* Row 1: Main Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        {/* Transactions */}
-        <div className="card p-4 flex flex-col">
-          <div className="flex items-start justify-between mb-2">
-            <div>
-              <div className="text-[10px] text-[var(--text-muted)] uppercase">Transactions <span className="normal-case text-[var(--text-tertiary)]">(this epoch)</span></div>
-              <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{formatCompact(current.totalTransactions)}</div>
-            </div>
-            <TrendBadge values={reversed.map(e => e.totalTransactions)} />
-          </div>
-          <div className="space-y-0.5 text-[10px] mb-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Non-vote <span className="text-[var(--text-tertiary)]">(user txs)</span></span>
-              <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.nonVoteTransactions)} <span className="text-[var(--text-muted)]">({current.totalTransactions > 0 ? ((current.nonVoteTransactions / current.totalTransactions) * 100).toFixed(0) : 0}%)</span></span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Vote <span className="text-[var(--text-tertiary)]">(consensus)</span></span>
-              <span className="font-mono text-[var(--text-tertiary)]">{formatCompact(current.voteTransactions)} <span className="text-[var(--text-muted)]">({current.totalTransactions > 0 ? ((current.voteTransactions / current.totalTransactions) * 100).toFixed(0) : 0}%)</span></span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Failed</span>
-              <span className="font-mono text-[var(--error)]">{formatCompact(current.failedTx)} <span className="text-[var(--text-muted)]">({(100 - current.successRate).toFixed(1)}%)</span></span>
-            </div>
-          </div>
-          <div className="flex gap-1.5 mt-auto pt-2">
-            {reversed.map((e, i) => (
-              <div key={e.epoch} className="flex-1 rounded-sm group relative cursor-default" style={{ height: '32px', background: 'var(--bg-tertiary)' }}>
-                {i === reversed.length - 1 && <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--accent)' }} />}
-                <div className="w-full rounded-sm" style={{ height: `${(e.totalTransactions / maxTx) * 100}%`, marginTop: `${100 - (e.totalTransactions / maxTx) * 100}%`, background: i === reversed.length - 1 ? 'var(--accent)' : 'var(--text-tertiary)', opacity: i === reversed.length - 1 ? 0.9 : 0.4 + (i / reversed.length) * 0.6 }} />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                  <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                    <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
-                    <div className="space-y-0.5 text-[var(--text-muted)]">
-                      <div className="flex justify-between gap-3">Total <span className="font-mono text-[var(--text-primary)]">{formatCompact(e.totalTransactions)}</span></div>
-                      <div className="flex justify-between gap-3">Non-vote <span className="font-mono text-[var(--text-secondary)]">{formatCompact(e.nonVoteTransactions)}</span></div>
-                      <div className="flex justify-between gap-3">Vote <span className="font-mono text-[var(--text-tertiary)]">{formatCompact(e.voteTransactions)}</span></div>
-                      <div className="flex justify-between gap-3">Success <span className="font-mono text-[var(--success)]">{e.successRate.toFixed(1)}%</span></div>
-                      <div className="flex justify-between gap-3">Failed <span className="font-mono text-[var(--error)]">{formatCompact(e.failedTx)}</span></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Fees */}
-        <div className="card p-4 flex flex-col">
-          <div className="flex items-start justify-between mb-2">
-            <div>
-              <div className="text-[10px] text-[var(--text-muted)] uppercase">Total Fees <span className="normal-case text-[var(--text-tertiary)]">(sum)</span></div>
-              <div className="text-xl font-mono font-bold text-[var(--accent)]">{formatSOL(current.totalFees)} <span className="text-xs font-normal text-[var(--text-muted)]">SOL</span></div>
-            </div>
-            <TrendBadge values={reversed.map(e => e.totalFees)} />
-          </div>
-          <div className="space-y-0.5 text-[10px] mb-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Base</span>
-              <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(current.baseFees)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.baseFees / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Priority</span>
-              <span className="font-mono text-[var(--accent)]">{formatSOL(current.priorityFees)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.priorityFees / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-muted)]">Jito tips</span>
-              <span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.jitoTips / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
-            </div>
-            <div className="flex items-center justify-between pt-0.5 border-t border-[var(--border-primary)]">
-              <span className="text-[var(--text-muted)]">Avg/TX</span>
-              <span className="font-mono text-[var(--text-secondary)]">{current.totalTransactions > 0 ? formatSOL(current.totalFees / current.totalTransactions) : '0'}</span>
-            </div>
-          </div>
-          <div className="flex gap-1.5 mt-auto pt-2">
-            {reversed.map((e, i) => {
-              return (
-                <div key={e.epoch} className="flex-1 rounded-sm group relative cursor-default" style={{ height: '32px', background: 'var(--bg-tertiary)' }}>
-                  {i === reversed.length - 1 && <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--accent)' }} />}
-                  <div className="w-full rounded-sm" style={{ height: `${(e.totalFees / maxFees) * 100}%`, marginTop: `${100 - (e.totalFees / maxFees) * 100}%`, background: i === reversed.length - 1 ? 'var(--accent)' : 'var(--accent-secondary)', opacity: i === reversed.length - 1 ? 0.9 : 0.4 + (i / reversed.length) * 0.6 }} />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                    <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                      <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
-                      <div className="space-y-0.5 text-[var(--text-muted)]">
-                        <div className="flex justify-between gap-3">Total <span className="font-mono text-[var(--accent)]">{formatSOL(e.totalFees)}</span></div>
-                        <div className="flex justify-between gap-3">Base <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(e.baseFees)}</span></div>
-                        <div className="flex justify-between gap-3">Priority <span className="font-mono text-[var(--accent)]">{formatSOL(e.priorityFees)}</span></div>
-                        <div className="flex justify-between gap-3">Jito <span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(e.jitoTips)}</span></div>
-                        <div className="flex justify-between gap-3 pt-0.5 border-t border-[var(--border-primary)]">Avg/TX <span className="font-mono text-[var(--text-secondary)]">{e.totalTransactions > 0 ? formatSOL(e.totalFees / e.totalTransactions) : '—'}</span></div>
-                        <div className="flex justify-between gap-3">P/B ratio <span className="font-mono text-[var(--text-secondary)]">{e.avgFeeRatio.toFixed(1)}x</span></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Jito */}
-        <div className="card p-4 flex flex-col">
-          <div className="flex items-start justify-between mb-2">
-            <div>
-              <div className="text-[10px] text-[var(--text-muted)] uppercase">Jito MEV <span className="normal-case text-[var(--text-tertiary)]">(tips for tx ordering)</span></div>
-              <div className="text-xl font-mono font-bold text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} <span className="text-xs font-normal text-[var(--text-muted)]">SOL</span></div>
-            </div>
-            <TrendBadge values={reversed.map(e => e.jitoTips)} />
-          </div>
-          <div className="flex items-center gap-2 text-[10px] mb-2">
-            <span className="text-[var(--text-muted)]">TXs</span>
-            <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.jitoTransactions)}</span>
-            <span className="text-[var(--text-muted)]">Avg</span>
-            <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(current.avgJitoTip)}</span>
-          </div>
-          <div className="flex gap-1.5 mt-auto pt-2">
-            {reversed.map((e, i) => (
-              <div key={e.epoch} className="flex-1 rounded-sm group relative cursor-default" style={{ height: '32px', background: 'var(--bg-tertiary)' }}>
-                {i === reversed.length - 1 && <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--accent-tertiary)' }} />}
-                <div className="w-full rounded-sm" style={{ height: `${maxJito > 0 ? (e.jitoTips / maxJito) * 100 : 0}%`, marginTop: `${maxJito > 0 ? 100 - (e.jitoTips / maxJito) * 100 : 100}%`, background: 'var(--accent-tertiary)', opacity: i === reversed.length - 1 ? 0.9 : 0.4 + (i / reversed.length) * 0.6 }} />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                  <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                    <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
-                    <div className="space-y-0.5 text-[var(--text-muted)]">
-                      <div className="flex justify-between gap-3">Total tips <span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(e.jitoTips)} SOL</span></div>
-                      <div className="flex justify-between gap-3">Jito TXs <span className="font-mono text-[var(--text-secondary)]">{formatCompact(e.jitoTransactions)}</span></div>
-                      <div className="flex justify-between gap-3">Avg tip <span className="font-mono text-[var(--text-secondary)]">{formatSOL(e.avgJitoTip)}</span></div>
-                      <div className="flex justify-between gap-3">Median tip <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(e.medianJitoTip)}</span></div>
-                      <div className="flex justify-between gap-3">Adoption <span className="font-mono text-[var(--accent-tertiary)]">{e.totalTransactions > 0 ? ((e.jitoTransactions / e.totalTransactions) * 100).toFixed(1) : 0}%</span></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Compute & Efficiency */}
+    <section className="mb-10">
+      <SectionHeader
+        title="Epoch Analytics"
+        subtitle={`Epoch ${current.epoch} • ${allEpochs.length} epochs • Solana Compass`}
+      />
+      <div className="card p-6">
+        {/* 4 Rich Summary Cards with trends + mini bar charts */}
         {(() => {
+          const reversed = allEpochs.slice().reverse();
+          const totalFeesAndTips = current.totalFees + current.jitoTips;
           const cuFillPct = (current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
           const wastedCUPerBlock = SOLANA_LIMITS.BLOCK_CU_LIMIT - current.avgCUPerBlock;
           const activeBlocks = current.totalSlots - current.skippedSlots;
-          const totalWastedCU = wastedCUPerBlock * activeBlocks;
-          const maxCUFill = Math.max(...allEpochs.map(e => e.avgCUPerBlock));
-          return (
-            <div className="card p-4 flex flex-col">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <div className="text-[10px] text-[var(--text-muted)] uppercase">Block Efficiency <span className="normal-case text-[var(--text-tertiary)]">(compute)</span></div>
-                  <div className="text-xl font-mono font-bold" style={{ color: cuFillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{cuFillPct.toFixed(1)}% <span className="text-xs font-normal text-[var(--text-muted)]">CU fill</span></div>
-                </div>
-                <TrendBadge values={reversed.map(e => e.avgCUPerBlock)} />
-              </div>
-              <div className="space-y-0.5 text-[10px] mb-2">
-                <div className="flex justify-between cursor-default" title={`${formatCU(current.avgCUPerBlock)} of ${formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)} max`}>
-                  <span className="text-[var(--text-muted)]">Avg CU/Block</span>
-                  <span className="font-mono text-[var(--text-secondary)]">{formatCU(current.avgCUPerBlock)} <span className="text-[var(--text-muted)]">/ {formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)}</span></span>
-                </div>
-                <div className="flex justify-between cursor-default" title="Unused compute capacity per block on average">
-                  <span className="text-[var(--text-muted)]">Wasted CU/Block</span>
-                  <span className="font-mono text-[var(--warning)]">{formatCU(wastedCUPerBlock)} <span className="text-[var(--text-muted)]">({(100 - cuFillPct).toFixed(1)}%)</span></span>
-                </div>
-                <div className="flex justify-between cursor-default" title="Total wasted compute units across all blocks in epoch">
-                  <span className="text-[var(--text-muted)]">Total Wasted</span>
-                  <span className="font-mono text-[var(--text-tertiary)]">{formatCompact(totalWastedCU)} CU</span>
-                </div>
-                <div className="flex justify-between cursor-default" title={`${current.packedSlots.toLocaleString()} of ${activeBlocks.toLocaleString()} blocks were >80% full`}>
-                  <span className="text-[var(--text-muted)]">Packed Blocks <span className="text-[var(--text-tertiary)]">(&gt;80%)</span></span>
-                  <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.packedSlots)} <span className="text-[var(--text-muted)]">({activeBlocks > 0 ? ((current.packedSlots / activeBlocks) * 100).toFixed(1) : 0}%)</span></span>
-                </div>
-              </div>
-              {/* CU fill per epoch bar chart */}
-              <div className="flex gap-1.5 mt-auto pt-2">
-                {reversed.map((e, i) => {
-                  const fill = (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+
+          // Mini bar chart shared component — last 15 epochs for readability
+          const CHART_EPOCHS = 15;
+          const MiniBarChart = ({ data, getValue, getColor, accentColor }: { data: EpochNetworkStats[]; getValue: (e: EpochNetworkStats) => number; getColor?: (e: EpochNetworkStats) => string; accentColor?: string }) => {
+            const chartData = data.slice(-CHART_EPOCHS);
+            const maxVal = Math.max(...chartData.map(getValue));
+            return (
+              <div className="flex gap-[2px] mt-auto pt-2" style={{ height: '40px' }}>
+                {chartData.map((e, i) => {
+                  const val = getValue(e);
+                  const color = getColor ? getColor(e) : (accentColor || 'var(--text-tertiary)');
+                  const isCurrent = i === chartData.length - 1;
+                  const heightPct = maxVal > 0 ? (val / maxVal) * 100 : 0;
                   return (
-                    <div key={e.epoch} className="flex-1 rounded-sm group relative cursor-default" style={{ height: '32px', background: 'var(--bg-tertiary)' }}>
-                      {i === reversed.length - 1 && <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: fill > 60 ? 'var(--warning)' : 'var(--success)' }} />}
-                      <div className="w-full rounded-sm" style={{ height: `${maxCUFill > 0 ? (e.avgCUPerBlock / maxCUFill) * 100 : 0}%`, marginTop: `${maxCUFill > 0 ? 100 - (e.avgCUPerBlock / maxCUFill) * 100 : 100}%`, background: fill > 60 ? 'var(--warning)' : 'var(--success)', opacity: i === reversed.length - 1 ? 0.9 : 0.4 + (i / reversed.length) * 0.6 }} />
+                    <div key={e.epoch} className="flex-1 flex flex-col items-center group relative cursor-default" style={{ minWidth: 0 }}>
+                      {isCurrent && <div className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0 mb-0.5" style={{ backgroundColor: color }} />}
+                      <div className="w-full flex-1 flex items-end rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                        <div className="w-full rounded-sm transition-all duration-300" style={{ height: `${Math.max(heightPct, 3)}%`, background: color, opacity: isCurrent ? 0.9 : 0.3 + (i / chartData.length) * 0.6 }} />
+                      </div>
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                        <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                          <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
-                          <div className="space-y-0.5 text-[var(--text-muted)]">
-                            <div className="flex justify-between gap-3">CU Fill <span className="font-mono text-[var(--text-primary)]">{((e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100).toFixed(1)}%</span></div>
-                            <div className="flex justify-between gap-3">Avg CU/Block <span className="font-mono text-[var(--text-secondary)]">{formatCU(e.avgCUPerBlock)}</span></div>
-                            <div className="flex justify-between gap-3">Wasted/Block <span className="font-mono text-[var(--warning)]">{formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT - e.avgCUPerBlock)}</span></div>
-                            <div className="flex justify-between gap-3">Packed <span className="font-mono text-[var(--text-secondary)]">{formatCompact(e.packedSlots)}</span></div>
-                            <div className="flex justify-between gap-3">Skip Rate <span className="font-mono text-[var(--text-tertiary)]">{e.skipRate.toFixed(2)}%</span></div>
-                            <div className="flex justify-between gap-3">Success <span className="font-mono text-[var(--success)]">{e.successRate.toFixed(1)}%</span></div>
+                        <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                          <div className="font-medium text-[var(--text-primary)] mb-0.5">Epoch {e.epoch}{isCurrent ? ' (current)' : ''}</div>
+                          <div className="text-[var(--text-muted)] mb-1.5">{formatEpochDate(e.startedAt)}</div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
+                            <span>TXs</span><span className="font-mono text-[var(--text-primary)] text-right">{formatCompact(e.totalTransactions)}</span>
+                            <span>User TXs</span><span className="font-mono text-[var(--text-secondary)] text-right">{formatCompact(e.nonVoteTransactions)}</span>
+                            <span>Failed</span><span className="font-mono text-[var(--error)] text-right">{formatCompact(e.failedTx)} ({(100 - e.successRate).toFixed(1)}%)</span>
+                            <span>Success</span><span className="font-mono text-[var(--success)] text-right">{e.successRate.toFixed(1)}%</span>
+                            <span className="pt-0.5 border-t border-[var(--border-primary)]">Fees</span><span className="font-mono text-[var(--accent)] text-right pt-0.5 border-t border-[var(--border-primary)]">{formatSOL(e.totalFees)} SOL</span>
+                            <span>Base</span><span className="font-mono text-[var(--text-tertiary)] text-right">{formatSOL(e.baseFees)}</span>
+                            <span>Priority</span><span className="font-mono text-[var(--accent)] text-right">{formatSOL(e.priorityFees)}</span>
+                            <span>Jito tips</span><span className="font-mono text-[var(--accent-tertiary)] text-right">{formatSOL(e.jitoTips)}</span>
+                            <span className="pt-0.5 border-t border-[var(--border-primary)]">CU fill</span><span className="font-mono text-right pt-0.5 border-t border-[var(--border-primary)]" style={{ color: (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100) > 60 ? 'var(--warning)' : 'var(--success)' }}>{(e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100).toFixed(1)}%</span>
+                            <span>Skip rate</span><span className="font-mono text-[var(--text-tertiary)] text-right">{e.skipRate.toFixed(2)}%</span>
+                            <span>Block time</span><span className="font-mono text-[var(--text-secondary)] text-right">{e.avgBlockTime.toFixed(0)}ms</span>
                           </div>
                         </div>
                       </div>
@@ -1047,260 +1005,373 @@ function EpochSummaryCards({ data }: { data: EpochAnalyticsData }) {
                   );
                 })}
               </div>
+            );
+          };
+
+          return (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              {/* Transactions */}
+              <div className="card p-4 flex flex-col">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="text-[10px] text-[var(--text-muted)] uppercase">Transactions <span className="normal-case text-[var(--text-tertiary)]">(this epoch)</span></div>
+                    <div className="text-xl font-mono font-bold text-[var(--text-primary)]">{formatCompact(current.totalTransactions)}</div>
+                  </div>
+                  <TrendBadge values={reversed.map(e => e.totalTransactions)} />
+                </div>
+                <div className="space-y-0.5 text-[10px] mb-2">
+                  <div className="flex items-center justify-between" title="User transactions — excludes validator consensus votes">
+                    <span className="text-[var(--text-muted)]">User TXs <span className="text-[var(--text-tertiary)]">(non-vote)</span></span>
+                    <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.nonVoteTransactions)} <span className="text-[var(--text-muted)]">({current.totalTransactions > 0 ? ((current.nonVoteTransactions / current.totalTransactions) * 100).toFixed(0) : 0}%)</span></span>
+                  </div>
+                  <div className="flex items-center justify-between" title="Validator consensus votes">
+                    <span className="text-[var(--text-muted)]">Vote <span className="text-[var(--text-tertiary)]">(consensus)</span></span>
+                    <span className="font-mono text-[var(--text-tertiary)]">{formatCompact(current.voteTransactions)} <span className="text-[var(--text-muted)]">({current.totalTransactions > 0 ? ((current.voteTransactions / current.totalTransactions) * 100).toFixed(0) : 0}%)</span></span>
+                  </div>
+                  <div className="flex items-center justify-between" title={`${formatCompact(current.failedTx)} failed out of ${formatCompact(current.totalTransactions)} total`}>
+                    <span className="text-[var(--text-muted)]">Failed</span>
+                    <span className="font-mono text-[var(--error)]">{formatCompact(current.failedTx)} <span className="text-[var(--text-muted)]">({(100 - current.successRate).toFixed(1)}%)</span></span>
+                  </div>
+                </div>
+                <MiniBarChart data={reversed} getValue={e => e.totalTransactions} accentColor="var(--accent)" />
+              </div>
+
+              {/* Fees */}
+              <div className="card p-4 flex flex-col">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="text-[10px] text-[var(--text-muted)] uppercase">Total Fees <span className="normal-case text-[var(--text-tertiary)]">(protocol)</span></div>
+                    <div className="text-xl font-mono font-bold text-[var(--accent)]">{formatSOL(current.totalFees)} <span className="text-xs font-normal text-[var(--text-muted)]">SOL</span></div>
+                  </div>
+                  <TrendBadge values={reversed.map(e => e.totalFees)} />
+                </div>
+                <div className="space-y-0.5 text-[10px] mb-2">
+                  <div className="flex items-center justify-between" title="Fixed 5,000 lamports/signature — burned (removed from supply)">
+                    <span className="text-[var(--text-muted)]">Base</span>
+                    <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(current.baseFees)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.baseFees / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
+                  </div>
+                  <div className="flex items-center justify-between" title="User-set fees for faster inclusion — goes to the block producer">
+                    <span className="text-[var(--text-muted)]">Priority</span>
+                    <span className="font-mono text-[var(--accent)]">{formatSOL(current.priorityFees)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.priorityFees / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
+                  </div>
+                  <div className="flex items-center justify-between" title="Tips paid to Jito validators for transaction ordering (MEV)">
+                    <span className="text-[var(--text-muted)]">Jito tips</span>
+                    <span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} <span className="text-[var(--text-muted)]">({totalFeesAndTips > 0 ? ((current.jitoTips / totalFeesAndTips) * 100).toFixed(0) : 0}%)</span></span>
+                  </div>
+                  <div className="flex items-center justify-between pt-0.5 border-t border-[var(--border-primary)]">
+                    <span className="text-[var(--text-muted)]">Avg/TX</span>
+                    <span className="font-mono text-[var(--text-secondary)]">{current.totalTransactions > 0 ? formatSOL(current.totalFees / current.totalTransactions) : '0'}</span>
+                  </div>
+                </div>
+                <MiniBarChart data={reversed} getValue={e => e.totalFees} accentColor="var(--accent)" />
+              </div>
+
+              {/* Jito MEV */}
+              <div className="card p-4 flex flex-col">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="text-[10px] text-[var(--text-muted)] uppercase">Jito MEV <span className="normal-case text-[var(--text-tertiary)]">(tips for TX ordering)</span></div>
+                    <div className="text-xl font-mono font-bold text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} <span className="text-xs font-normal text-[var(--text-muted)]">SOL</span></div>
+                  </div>
+                  <TrendBadge values={reversed.map(e => e.jitoTips)} />
+                </div>
+                <div className="space-y-0.5 text-[10px] mb-2">
+                  <div className="flex items-center justify-between" title="Number of transactions using Jito bundles">
+                    <span className="text-[var(--text-muted)]">Jito TXs</span>
+                    <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.jitoTransactions)}</span>
+                  </div>
+                  <div className="flex items-center justify-between" title="Average tip per Jito transaction">
+                    <span className="text-[var(--text-muted)]">Avg tip</span>
+                    <span className="font-mono text-[var(--text-tertiary)]">{formatSOL(current.avgJitoTip)}</span>
+                  </div>
+                  <div className="flex items-center justify-between" title="Percentage of all transactions that use Jito bundles">
+                    <span className="text-[var(--text-muted)]">Adoption</span>
+                    <span className="font-mono text-[var(--accent-tertiary)]">{current.totalTransactions > 0 ? ((current.jitoTransactions / current.totalTransactions) * 100).toFixed(1) : 0}%</span>
+                  </div>
+                </div>
+                <MiniBarChart data={reversed} getValue={e => e.jitoTips} accentColor="var(--accent-tertiary)" />
+              </div>
+
+              {/* Block Efficiency */}
+              <div className="card p-4 flex flex-col">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="text-[10px] text-[var(--text-muted)] uppercase">Block Efficiency <span className="normal-case text-[var(--text-tertiary)]">(compute)</span></div>
+                    <div className="text-xl font-mono font-bold" style={{ color: cuFillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{cuFillPct.toFixed(1)}% <span className="text-xs font-normal text-[var(--text-muted)]">CU fill</span></div>
+                  </div>
+                  <TrendBadge values={reversed.map(e => e.avgCUPerBlock)} />
+                </div>
+                <div className="space-y-0.5 text-[10px] mb-2">
+                  <div className="flex justify-between cursor-default" title={`${formatCU(current.avgCUPerBlock)} of ${formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)} max compute units per block`}>
+                    <span className="text-[var(--text-muted)]">Avg CU/Block</span>
+                    <span className="font-mono text-[var(--text-secondary)]">{formatCU(current.avgCUPerBlock)} <span className="text-[var(--text-muted)]">/ {formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)}</span></span>
+                  </div>
+                  <div className="flex justify-between cursor-default" title="Unused compute capacity per block on average">
+                    <span className="text-[var(--text-muted)]">Wasted CU/Block</span>
+                    <span className="font-mono text-[var(--warning)]">{formatCU(wastedCUPerBlock)} <span className="text-[var(--text-muted)]">({(100 - cuFillPct).toFixed(1)}%)</span></span>
+                  </div>
+                  <div className="flex justify-between cursor-default" title={`${current.packedSlots.toLocaleString()} of ${activeBlocks.toLocaleString()} blocks were >80% full`}>
+                    <span className="text-[var(--text-muted)]">Packed Blocks <span className="text-[var(--text-tertiary)]">(&gt;80%)</span></span>
+                    <span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.packedSlots)} <span className="text-[var(--text-muted)]">({activeBlocks > 0 ? ((current.packedSlots / activeBlocks) * 100).toFixed(1) : 0}%)</span></span>
+                  </div>
+                </div>
+                <MiniBarChart
+                  data={reversed}
+                  getValue={e => e.avgCUPerBlock}
+                  getColor={(e) => {
+                    const fill = (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+                    return fill > 60 ? 'var(--warning)' : 'var(--success)';
+                  }}
+                />
+              </div>
             </div>
           );
         })()}
-      </div>
 
+        {/* Epoch Comparison Table */}
+        {allEpochs.length > 1 && (
+          <div>
+            <div className="flex items-center justify-between mb-3 gap-3">
+              <div className="text-xs text-[var(--text-muted)] uppercase">Epoch Comparison <span className="normal-case text-[var(--text-tertiary)]">({allEpochs.length} epochs)</span></div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={epochSearch}
+                    onChange={e => { setEpochSearch(e.target.value); setSearchError(''); }}
+                    onKeyDown={e => e.key === 'Enter' && handleEpochSearch()}
+                    placeholder="Epoch #"
+                    className="w-24 px-2 py-1 text-xs font-mono bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-secondary)] focus:outline-none"
+                  />
+                  <button
+                    onClick={handleEpochSearch}
+                    disabled={searchLoading}
+                    className="px-2 py-1 text-[10px] uppercase bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--accent-secondary)] transition-colors disabled:opacity-50"
+                  >
+                    {searchLoading ? '...' : 'Go'}
+                  </button>
+                </div>
+                {searchError && <span className="text-[10px] text-[var(--error)]">{searchError}</span>}
+                {searchResult && (
+                  <button onClick={() => { setSearchResult(null); setEpochSearch(''); }} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--error)]">clear</button>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[var(--text-muted)] border-b border-[var(--border-primary)]">
+                    <th className="py-2 pr-3">Epoch</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Date range of the epoch — start to end">Period</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Total transactions in the epoch (vote + non-vote)">Total TXs</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="User transactions only — excludes validator consensus votes">User TXs</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Number of failed transactions and their percentage of total">Failed</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Percentage of transactions that succeeded">Success</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Average time between blocks — Solana targets ~400ms">Avg Block</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Percentage of slots where the assigned leader didn't produce a block">Skip Rate</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Average compute units used per block — hover rows for waste details">CU/Block</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="How full blocks are on average — % of max 48M CU capacity used">CU Fill</th>
+                    <th className="py-2 pr-3 text-right cursor-help" title="Total protocol fees (base + priority) paid by users">Fees (SOL)</th>
+                    <th className="py-2 text-right cursor-help" title="Tips paid to Jito validators for transaction ordering (MEV)">Jito Tips</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Average row */}
+                  {averages && (
+                    <tr className="border-b-2 border-[var(--border-secondary)] bg-[var(--bg-tertiary)]/50" title={`Average across ${allEpochs.length} epochs — compare each row to this baseline`}>
+                      <td className="py-2 pr-3 text-[10px] text-[var(--accent-secondary)] uppercase font-medium whitespace-nowrap">Avg ({allEpochs.length})</td>
+                      <td className="py-2 pr-3 text-right text-[10px] text-[var(--text-muted)]">—</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{formatCompact(averages.totalTransactions)}</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{formatCompact(averages.nonVoteTransactions)}</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{formatCompact(averages.failedTx)} <span className="text-[var(--text-muted)]">({(100 - averages.successRate).toFixed(1)}%)</span></td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{averages.successRate.toFixed(1)}%</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{averages.avgBlockTime.toFixed(0)}ms</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{averages.skipRate.toFixed(2)}%</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{formatCU(averages.avgCUPerBlock)}</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{((averages.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-3 text-right font-mono text-[var(--accent-secondary)]">{formatSOL(averages.totalFees)}</td>
+                      <td className="py-2 text-right font-mono text-[var(--accent-secondary)]">{formatSOL(averages.jitoTips)}</td>
+                    </tr>
+                  )}
+                  {/* Search result row (if outside loaded range) */}
+                  {searchResult && <EpochRow epoch={searchResult} isCurrent={false} isSearch={true} endDate={epochEndDates.get(searchResult.epoch)} />}
+                  {/* Paged epoch rows */}
+                  {pagedEpochs.map((epoch) => (
+                    <EpochRow key={epoch.epoch} epoch={epoch} isCurrent={epoch.epoch === current.epoch} isSearch={false} endDate={epochEndDates.get(epoch.epoch)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination tabs */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-[var(--border-primary)]">
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  Showing {tablePage * ROWS_PER_PAGE + 1}–{Math.min((tablePage + 1) * ROWS_PER_PAGE, allEpochs.length)} of {allEpochs.length}
+                </div>
+                <div className="flex gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => {
+                    const startEpoch = allEpochs[i * ROWS_PER_PAGE]?.epoch;
+                    const endEpoch = allEpochs[Math.min((i + 1) * ROWS_PER_PAGE - 1, allEpochs.length - 1)]?.epoch;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setTablePage(i)}
+                        className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${
+                          tablePage === i
+                            ? 'bg-[var(--accent)] text-[var(--bg-primary)]'
+                            : 'bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]'
+                        }`}
+                        title={`Epochs ${startEpoch}–${endEpoch}`}
+                      >
+                        {startEpoch}–{endEpoch}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Data Source */}
+        <div className="mt-4 pt-4 border-t border-[var(--border-primary)] text-[10px] text-[var(--text-tertiary)] flex items-center justify-between">
+          <span>Data from <a href="https://solanacompass.com" target="_blank" rel="noopener noreferrer" className="text-[var(--accent-secondary)] hover:underline">Solana Compass</a></span>
+          <span>Updated: {new Date(current.updatedAt).toLocaleString()}</span>
+        </div>
+      </div>
     </section>
   );
 }
 
 // Epoch Detailed Analytics - Fee breakdown, CU efficiency, epoch table (for Explorer page)
 function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
+  const [chartPage, setChartPage] = useState(0);
+  const CHART_PAGE_SIZE = 5;
+
   if (data.isLoading || data.error || !data.currentEpoch) return null;
 
   const current = data.currentEpoch;
   const allEpochs = [current, ...data.previousEpochs];
-  const totalFeesAndTips = current.totalFees + current.jitoTips;
+  const chartTotalPages = Math.ceil(allEpochs.length / CHART_PAGE_SIZE);
+  const pagedChartEpochs = allEpochs.slice(chartPage * CHART_PAGE_SIZE, (chartPage + 1) * CHART_PAGE_SIZE);
+
+  const ChartPagination = () => chartTotalPages > 1 ? (
+    <div className="flex items-center gap-1 ml-2">
+      {Array.from({ length: chartTotalPages }, (_, i) => (
+        <button key={i} onClick={() => setChartPage(i)} className={`w-5 h-5 text-[9px] font-mono rounded transition-colors ${chartPage === i ? 'bg-[var(--accent)] text-[var(--bg-primary)]' : 'bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}>{i + 1}</button>
+      ))}
+    </div>
+  ) : null;
 
   return (
     <section className="mb-8 sm:mb-10">
-      <SectionHeader title="Epoch Deep Dive" subtitle={`Epoch ${current.epoch} • Fees, Compute & History`} />
+      <SectionHeader title="Epoch Deep Dive" subtitle={`Epoch ${current.epoch} • Compute & Fees by Epoch`} />
 
-      {/* Fee Breakdown */}
-      <div className="card p-4 mb-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-xs text-[var(--text-muted)] uppercase flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-            Fee Breakdown
-          </div>
-          <div className="flex items-center gap-3 text-[10px] text-[var(--text-tertiary)]">
-            <span>Epoch {current.epoch}</span>
-            <span className="text-[var(--border-secondary)]">|</span>
-            <span>{formatCompact(current.totalTransactions)} TXs</span>
-          </div>
-        </div>
-        <div className="text-[10px] text-[var(--text-tertiary)] mb-4">
-          Where SOL goes: base fees (protocol, fixed), priority fees (user-set, for faster inclusion), and Jito tips (MEV, for tx ordering).
-        </div>
-
-        {/* 3 fee type cards */}
-        <div className="grid grid-cols-3 gap-4 mb-4">
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--text-tertiary)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Base Fees</span>
-            </div>
-            <div className="font-mono text-lg text-[var(--text-secondary)]">{formatSOL(current.baseFees)} <span className="text-xs text-[var(--text-muted)]">SOL</span></div>
-            <div className="text-[10px] text-[var(--text-tertiary)]">{totalFeesAndTips > 0 ? ((current.baseFees / totalFeesAndTips) * 100).toFixed(1) : 0}% of total revenue</div>
-            <div className="mt-2 pt-2 border-t border-[var(--border-primary)] space-y-0.5 text-[10px]">
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Rate</span><span className="font-mono text-[var(--text-tertiary)]">5,000 lamports/sig</span></div>
-              <div className="flex justify-between" title="Base fees are burned (removed from supply)"><span className="text-[var(--text-muted)]">Destination</span><span className="text-[var(--warning)]">Burned</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Per TX avg</span><span className="font-mono text-[var(--text-tertiary)]">{current.totalTransactions > 0 ? formatSOL(current.baseFees / current.totalTransactions) : '—'}</span></div>
-            </div>
-          </div>
-
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
+      <div className="grid lg:grid-cols-2 gap-4 mb-4">
+        {/* Fee Trend by Epoch */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs text-[var(--text-muted)] uppercase flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Priority Fees</span>
+              Fee Trend
             </div>
-            <div className="font-mono text-lg text-[var(--accent)]">{formatSOL(current.priorityFees)} <span className="text-xs text-[var(--text-muted)]">SOL</span></div>
-            <div className="text-[10px] text-[var(--text-tertiary)]">{totalFeesAndTips > 0 ? ((current.priorityFees / totalFeesAndTips) * 100).toFixed(1) : 0}% of total revenue</div>
-            <div className="mt-2 pt-2 border-t border-[var(--border-primary)] space-y-0.5 text-[10px]">
-              <div className="flex justify-between" title="How much more users pay beyond the base fee on average"><span className="text-[var(--text-muted)]">P/B ratio</span><span className="font-mono text-[var(--accent)]">{current.avgFeeRatio.toFixed(1)}x base</span></div>
-              <div className="flex justify-between" title="Priority fees go to the block producer (validator)"><span className="text-[var(--text-muted)]">Destination</span><span className="text-[var(--accent-tertiary)]">Validator</span></div>
-              <div className="flex justify-between" title={`${formatSOL(current.totalFees)} SOL / ${formatCompact(current.totalTransactions)} TXs`}><span className="text-[var(--text-muted)]">Avg fee/TX</span><span className="font-mono text-[var(--text-secondary)]">{current.totalTransactions > 0 ? formatSOL(current.totalFees / current.totalTransactions) : '—'}</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Priority/non-vote</span><span className="font-mono text-[var(--text-secondary)]">{current.nonVoteTransactions > 0 ? formatSOL(current.priorityFees / current.nonVoteTransactions) : '—'}</span></div>
+            <div className="flex items-center gap-2 text-[9px] text-[var(--text-muted)]">
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--text-tertiary)]" />B</span>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />P</span>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-tertiary)]" />J</span>
+              <ChartPagination />
             </div>
           </div>
-
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--accent-tertiary)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Jito MEV Tips</span>
-            </div>
-            <div className="font-mono text-lg text-[var(--accent-tertiary)]">{formatSOL(current.jitoTips)} <span className="text-xs text-[var(--text-muted)]">SOL</span></div>
-            <div className="text-[10px] text-[var(--text-tertiary)]">{totalFeesAndTips > 0 ? ((current.jitoTips / totalFeesAndTips) * 100).toFixed(1) : 0}% of total revenue</div>
-            <div className="mt-2 pt-2 border-t border-[var(--border-primary)] space-y-0.5 text-[10px]">
-              <div className="flex justify-between" title={`Average: ${formatSOL(current.avgJitoTip)} SOL`}><span className="text-[var(--text-muted)]">Median tip</span><span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(current.medianJitoTip)} SOL</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Avg tip</span><span className="font-mono text-[var(--accent-tertiary)]">{formatSOL(current.avgJitoTip)} SOL</span></div>
-              <div className="flex justify-between" title={`${current.jitoTransactions.toLocaleString()} of ${current.totalTransactions.toLocaleString()} TXs use Jito`}><span className="text-[var(--text-muted)]">Adoption</span><span className="font-mono text-[var(--accent-tertiary)]">{current.totalTransactions > 0 ? ((current.jitoTransactions / current.totalTransactions) * 100).toFixed(1) : 0}%</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Jito TXs</span><span className="font-mono text-[var(--text-secondary)]">{formatCompact(current.jitoTransactions)}</span></div>
-            </div>
-          </div>
-        </div>
-
-        {/* Per-epoch fee comparison */}
-        {allEpochs.length > 1 && (
-          <div className="border-t border-[var(--border-primary)] pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] text-[var(--text-muted)] uppercase">Fee Trend by Epoch <span className="normal-case text-[var(--text-tertiary)]">(total = protocol fees + Jito tips)</span></div>
-              <div className="flex items-center gap-3 text-[9px] text-[var(--text-muted)]">
-                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[var(--text-tertiary)]" />Base</div>
-                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[var(--accent)]" />Priority</div>
-                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[var(--accent-tertiary)]" />Jito</div>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              {allEpochs.map((e, i) => {
-                const eTotal = e.baseFees + e.priorityFees + e.jitoTips;
-                const maxEpochFees = Math.max(...allEpochs.map(ep => ep.baseFees + ep.priorityFees + ep.jitoTips)) || 1;
-                return (
-                  <div key={e.epoch} className={`flex items-center gap-3 text-[10px] group cursor-default ${i === 0 ? '' : 'opacity-70 hover:opacity-100'}`} title={`Base: ${eTotal > 0 ? ((e.baseFees / eTotal) * 100).toFixed(0) : 0}% | Priority: ${eTotal > 0 ? ((e.priorityFees / eTotal) * 100).toFixed(0) : 0}% | Jito: ${eTotal > 0 ? ((e.jitoTips / eTotal) * 100).toFixed(0) : 0}%`}>
-                    <span className={`font-mono w-10 flex-shrink-0 ${i === 0 ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{i === 0 ? '*' : ''}</span>
-                    <div className="flex-1 h-5 flex rounded overflow-hidden bg-[var(--bg-tertiary)]" style={{ maxWidth: `${(eTotal / maxEpochFees) * 100}%` }}>
-                      <div className="h-full" style={{ width: `${eTotal > 0 ? (e.baseFees / eTotal) * 100 : 0}%`, background: 'var(--text-tertiary)' }} />
-                      <div className="h-full" style={{ width: `${eTotal > 0 ? (e.priorityFees / eTotal) * 100 : 0}%`, background: 'var(--accent)' }} />
-                      <div className="h-full" style={{ width: `${eTotal > 0 ? (e.jitoTips / eTotal) * 100 : 0}%`, background: 'var(--accent-tertiary)' }} />
-                    </div>
-                    <span className="font-mono w-14 text-right flex-shrink-0 text-[var(--text-tertiary)]">{formatSOL(e.totalFees)}</span>
-                    <span className="font-mono w-14 text-right flex-shrink-0 text-[var(--accent-tertiary)]">{formatSOL(e.jitoTips)}</span>
-                    <span className="font-mono w-14 text-right flex-shrink-0 text-[var(--text-muted)]">{formatSOL(eTotal)}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-end gap-4 mt-2 text-[9px] text-[var(--text-muted)]">
-              <span>* current epoch</span>
-              <span className="text-[var(--text-tertiary)]">|</span>
-              <span>Fees</span>
-              <span className="text-[var(--accent-tertiary)]">Tips</span>
-              <span className="text-[var(--text-muted)]">Total</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Compute & Block Efficiency */}
-      <div className="card p-4 mb-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-xs text-[var(--text-muted)] uppercase flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
-            Compute & Block Efficiency
-          </div>
-          <div className="flex items-center gap-3 text-[10px] text-[var(--text-tertiary)]">
-            <span>{allEpochs.length} epochs</span>
-            <span className="text-[var(--border-secondary)]">|</span>
-            <span>Block limit: {formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)}</span>
-          </div>
-        </div>
-        <div className="text-[10px] text-[var(--text-tertiary)] mb-4">
-          How efficiently is block space being used? Avg CU fill per block, wasted compute capacity, and packed block rates across epochs.
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 mb-4">
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--success)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">CU Utilization</span>
-            </div>
-            <div className="font-mono text-lg" style={{ color: (current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100) > 60 ? 'var(--warning)' : 'var(--success)' }}>{(current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100).toFixed(1)}%</div>
-            <div className="text-[10px] text-[var(--text-tertiary)]">{formatCU(current.avgCUPerBlock)} avg CU/block</div>
-            <div className="mt-2 pt-2 border-t border-[var(--border-primary)]">
-              <div className="h-2 rounded-full overflow-hidden bg-[var(--bg-tertiary)]">
-                <div className="h-full rounded-full" style={{ width: `${Math.min(100, current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100)}%`, background: (current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100) > 60 ? 'var(--warning)' : 'var(--success)' }} />
-              </div>
-              <div className="flex justify-between mt-0.5 text-[9px] text-[var(--text-muted)]">
-                <span>0</span>
-                <span>{formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Wasted Compute</span>
-            </div>
-            {(() => {
-              const wastedPerBlock = SOLANA_LIMITS.BLOCK_CU_LIMIT - current.avgCUPerBlock;
-              const activeBlocks = current.totalSlots - current.skippedSlots;
-              const totalWasted = wastedPerBlock * activeBlocks;
+          <div className="space-y-1.5">
+            {pagedChartEpochs.map((e) => {
+              const eTotal = e.baseFees + e.priorityFees + e.jitoTips;
+              const maxEpochFees = Math.max(...pagedChartEpochs.map(ep => ep.baseFees + ep.priorityFees + ep.jitoTips)) || 1;
+              const isCurrent = e.epoch === current.epoch;
               return (
-                <>
-                  <div className="font-mono text-lg text-[var(--warning)]">{formatCU(wastedPerBlock)}</div>
-                  <div className="text-[10px] text-[var(--text-tertiary)]">wasted CU/block avg</div>
-                  <div className="mt-2 pt-2 border-t border-[var(--border-primary)] space-y-0.5 text-[10px]">
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">Total wasted</span><span className="font-mono text-[var(--text-tertiary)]">{formatCompact(totalWasted)} CU</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">Active blocks</span><span className="font-mono text-[var(--text-secondary)]">{formatCompact(activeBlocks)}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">Waste rate</span><span className="font-mono text-[var(--warning)]">{(100 - current.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT * 100).toFixed(1)}%</span></div>
+                <div key={e.epoch} className={`flex items-center gap-2 text-[10px] group cursor-default relative ${isCurrent ? '' : 'opacity-70 hover:opacity-100'}`}>
+                  <a href={`https://solanacompass.com/epochs/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
+                  <div className="flex-1 h-5 flex rounded overflow-hidden bg-[var(--bg-tertiary)]" style={{ maxWidth: `${(eTotal / maxEpochFees) * 100}%` }}>
+                    <div className="h-full" style={{ width: `${eTotal > 0 ? (e.baseFees / eTotal) * 100 : 0}%`, background: 'var(--text-tertiary)' }} />
+                    <div className="h-full" style={{ width: `${eTotal > 0 ? (e.priorityFees / eTotal) * 100 : 0}%`, background: 'var(--accent)' }} />
+                    <div className="h-full" style={{ width: `${eTotal > 0 ? (e.jitoTips / eTotal) * 100 : 0}%`, background: 'var(--accent-tertiary)' }} />
                   </div>
-                </>
-              );
-            })()}
-          </div>
-
-          <div className="bg-[var(--bg-secondary)] rounded-lg p-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Network Health</span>
-            </div>
-            <div className="font-mono text-lg text-[var(--success)]">{current.successRate.toFixed(1)}% <span className="text-xs text-[var(--text-muted)]">success</span></div>
-            <div className="text-[10px] text-[var(--text-tertiary)]">{current.avgBlockTime.toFixed(0)}ms avg block time</div>
-            <div className="mt-2 pt-2 border-t border-[var(--border-primary)] space-y-0.5 text-[10px]">
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Skip rate</span><span className={`font-mono ${current.skipRate > 5 ? 'text-[var(--warning)]' : 'text-[var(--text-secondary)]'}`}>{current.skipRate.toFixed(2)}%</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Median block time</span><span className="font-mono text-[var(--text-secondary)]">{current.medianBlockTime.toFixed(0)}ms</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">Failed TXs</span><span className="font-mono text-[var(--error)]">{formatCompact(current.failedTx)}</span></div>
-            </div>
-          </div>
-        </div>
-
-        {/* Per-epoch CU comparison */}
-        {allEpochs.length > 1 && (
-          <div className="border-t border-[var(--border-primary)] pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] text-[var(--text-muted)] uppercase">CU Fill Rate by Epoch</div>
-              <div className="flex items-center gap-3 text-[9px] text-[var(--text-muted)]">
-                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[var(--success)]" />Used</div>
-                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[var(--bg-tertiary)]" />Wasted</div>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              {allEpochs.map((e, i) => {
-                const fillPct = (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
-                const activeBlocksE = e.totalSlots - e.skippedSlots;
-                const packedPct = activeBlocksE > 0 ? (e.packedSlots / activeBlocksE) * 100 : 0;
-                return (
-                  <div key={e.epoch} className={`flex items-center gap-3 text-[10px] group cursor-default relative ${i === 0 ? '' : 'opacity-70 hover:opacity-100'}`}>
-                    <span className={`font-mono w-10 flex-shrink-0 ${i === 0 ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{i === 0 ? '*' : ''}</span>
-                    <div className="flex-1 h-5 rounded overflow-hidden bg-[var(--bg-tertiary)]">
-                      <div className="h-full rounded" style={{ width: `${fillPct}%`, background: fillPct > 60 ? 'var(--warning)' : 'var(--success)', opacity: 0.8 }} />
-                    </div>
-                    <span className="font-mono w-12 text-right flex-shrink-0" style={{ color: fillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{fillPct.toFixed(1)}%</span>
-                    <span className="font-mono w-16 text-right flex-shrink-0 text-[var(--text-tertiary)]">{formatCU(e.avgCUPerBlock)}</span>
-                    <span className="font-mono w-12 text-right flex-shrink-0 text-[var(--text-muted)]" title={`${formatCompact(e.packedSlots)} packed blocks`}>{packedPct.toFixed(0)}% pk</span>
-                    {/* Hover tooltip */}
-                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
-                      <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
-                        <div className="font-medium text-[var(--text-primary)] mb-1.5">Epoch {e.epoch}</div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[var(--text-muted)]">
-                          <span>Total TXs</span><span className="font-mono text-[var(--text-primary)] text-right">{formatCompact(e.totalTransactions)}</span>
-                          <span>Non-vote</span><span className="font-mono text-[var(--text-secondary)] text-right">{formatCompact(e.nonVoteTransactions)}</span>
-                          <span>Failed</span><span className="font-mono text-[var(--error)] text-right">{formatCompact(e.failedTx)}</span>
-                          <span>Success rate</span><span className="font-mono text-[var(--success)] text-right">{e.successRate.toFixed(1)}%</span>
-                          <span className="pt-0.5 border-t border-[var(--border-primary)]">Avg block time</span><span className="font-mono text-[var(--text-secondary)] text-right pt-0.5 border-t border-[var(--border-primary)]">{e.avgBlockTime.toFixed(0)}ms</span>
-                          <span>Skip rate</span><span className="font-mono text-[var(--warning)] text-right">{e.skipRate.toFixed(2)}%</span>
-                          <span className="pt-0.5 border-t border-[var(--border-primary)]">Total fees</span><span className="font-mono text-[var(--accent)] text-right pt-0.5 border-t border-[var(--border-primary)]">{formatSOL(e.totalFees)} SOL</span>
-                          <span>Priority fees</span><span className="font-mono text-[var(--accent)] text-right">{formatSOL(e.priorityFees)} SOL</span>
-                          <span>Jito tips</span><span className="font-mono text-[var(--accent-tertiary)] text-right">{formatSOL(e.jitoTips)} SOL</span>
-                        </div>
+                  <span className="font-mono w-12 text-right flex-shrink-0 text-[var(--text-muted)]">{formatSOL(eTotal)}</span>
+                  {/* Tooltip */}
+                  <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
+                    <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                      <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
+                        <span>Base fees</span><span className="font-mono text-[var(--text-tertiary)] text-right">{formatSOL(e.baseFees)} SOL ({eTotal > 0 ? ((e.baseFees / eTotal) * 100).toFixed(0) : 0}%)</span>
+                        <span>Priority</span><span className="font-mono text-[var(--accent)] text-right">{formatSOL(e.priorityFees)} SOL ({eTotal > 0 ? ((e.priorityFees / eTotal) * 100).toFixed(0) : 0}%)</span>
+                        <span>Jito tips</span><span className="font-mono text-[var(--accent-tertiary)] text-right">{formatSOL(e.jitoTips)} SOL ({eTotal > 0 ? ((e.jitoTips / eTotal) * 100).toFixed(0) : 0}%)</span>
+                        <span className="pt-0.5 border-t border-[var(--border-primary)]">Avg/TX</span><span className="font-mono text-[var(--text-secondary)] text-right pt-0.5 border-t border-[var(--border-primary)]">{e.totalTransactions > 0 ? formatSOL(e.totalFees / e.totalTransactions) : '—'}</span>
+                        <span>P/B ratio</span><span className="font-mono text-[var(--text-secondary)] text-right">{e.avgFeeRatio.toFixed(1)}x</span>
                       </div>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-end gap-3 mt-2 text-[9px] text-[var(--text-muted)]">
+            <span>* current</span>
+            <span className="text-[var(--text-muted)]">Total SOL</span>
+          </div>
+        </div>
+
+        {/* CU Fill Rate by Epoch */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs text-[var(--text-muted)] uppercase flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--warning)]" />
+              CU Fill Rate
             </div>
-            <div className="flex items-center justify-end gap-4 mt-2 text-[9px] text-[var(--text-muted)]">
-              <span>* current epoch</span>
-              <span className="text-[var(--border-secondary)]">|</span>
-              <span>Fill %</span>
-              <span className="text-[var(--text-tertiary)]">Avg CU</span>
-              <span className="text-[var(--text-muted)]">Packed %</span>
+            <div className="flex items-center gap-2 text-[9px] text-[var(--text-muted)]">
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--success)]" />Used</span>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border-primary)]" />Wasted</span>
+              <ChartPagination />
             </div>
           </div>
-        )}
+          <div className="space-y-1.5">
+            {pagedChartEpochs.map((e) => {
+              const fillPct = (e.avgCUPerBlock / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100;
+              const activeBlocksE = e.totalSlots - e.skippedSlots;
+              const packedPct = activeBlocksE > 0 ? (e.packedSlots / activeBlocksE) * 100 : 0;
+              const isCurrent = e.epoch === current.epoch;
+              return (
+                <div key={e.epoch} className={`flex items-center gap-2 text-[10px] group cursor-default relative ${isCurrent ? '' : 'opacity-70 hover:opacity-100'}`}>
+                  <a href={`https://solanacompass.com/epochs/${e.epoch}`} target="_blank" rel="noopener noreferrer" className={`font-mono w-9 flex-shrink-0 hover:underline ${isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}>{e.epoch}{isCurrent ? '*' : ''}</a>
+                  <div className="flex-1 h-5 rounded overflow-hidden bg-[var(--bg-tertiary)]">
+                    <div className="h-full rounded" style={{ width: `${fillPct}%`, background: fillPct > 60 ? 'var(--warning)' : 'var(--success)', opacity: 0.8 }} />
+                  </div>
+                  <span className="font-mono w-11 text-right flex-shrink-0" style={{ color: fillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{fillPct.toFixed(1)}%</span>
+                  <span className="font-mono w-11 text-right flex-shrink-0 text-[var(--text-muted)]">{packedPct.toFixed(0)}% pk</span>
+                  {/* Tooltip */}
+                  <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
+                    <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                      <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
+                        <span>CU fill</span><span className="font-mono text-right" style={{ color: fillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{fillPct.toFixed(1)}%</span>
+                        <span>Avg CU/block</span><span className="font-mono text-[var(--text-secondary)] text-right">{formatCU(e.avgCUPerBlock)}</span>
+                        <span>Wasted/block</span><span className="font-mono text-[var(--warning)] text-right">{formatCU(SOLANA_LIMITS.BLOCK_CU_LIMIT - e.avgCUPerBlock)}</span>
+                        <span>Packed blocks</span><span className="font-mono text-[var(--text-secondary)] text-right">{formatCompact(e.packedSlots)} ({packedPct.toFixed(0)}%)</span>
+                        <span className="pt-0.5 border-t border-[var(--border-primary)]">Skip rate</span><span className="font-mono text-[var(--text-tertiary)] text-right pt-0.5 border-t border-[var(--border-primary)]">{e.skipRate.toFixed(2)}%</span>
+                        <span>Success</span><span className="font-mono text-[var(--success)] text-right">{e.successRate.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-end gap-3 mt-2 text-[9px] text-[var(--text-muted)]">
+            <span>* current</span>
+            <span>Fill %</span>
+            <span className="text-[var(--text-muted)]">Packed %</span>
+          </div>
+        </div>
       </div>
 
     </section>
@@ -1822,61 +1893,147 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
         const hb = historicalBaseline;
         const delta = analysis.failureRate - hb.avgFailureRate;
         const isAbove = delta > 0;
+        // Chart data
+        const epochs = hb.allEpochs; // oldest first
+        const rates = epochs.map(e => 100 - e.successRate);
+        const maxR = Math.max(...rates, hb.avgFailureRate * 1.5, 0.1);
+        // Compute nice Y-axis ticks
+        const yTickStep = maxR <= 5 ? 1 : maxR <= 15 ? 2.5 : maxR <= 30 ? 5 : 10;
+        const yTicks: number[] = [];
+        for (let v = 0; v <= maxR; v += yTickStep) yTicks.push(v);
+        // X positions as percentages (0-100) for positioning
+        const xPcts = epochs.map((_, i) => epochs.length > 1 ? (i / (epochs.length - 1)) * 100 : 50);
+        const yPcts = rates.map(r => 100 - (r / maxR) * 100);
+        const avgYPct = 100 - (hb.avgFailureRate / maxR) * 100;
+        // Date labels for x-axis (every ~10 epochs)
+        const xLabelInterval = Math.max(1, Math.ceil(epochs.length / 6));
+        const xLabels = epochs.map((e, i) => {
+          if (i === 0 || i === epochs.length - 1 || i % xLabelInterval === 0) {
+            const d = new Date(e.startedAt);
+            return { i, label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), epoch: e.epoch };
+          }
+          return null;
+        }).filter(Boolean) as { i: number; label: string; epoch: number }[];
         return (
           <div className="card p-4 mb-4 animate-section">
             <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
-              Historical Baseline <span className="normal-case text-[var(--text-tertiary)]">(epoch-level context)</span>
+              Historical Baseline <span className="normal-case text-[var(--text-tertiary)]">(epoch-level failure rates)</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
-              {/* Left: stat cards */}
-              <div>
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Epoch Avg Failure Rate</div>
-                    <div className="text-lg font-mono text-[var(--text-primary)]">{hb.avgFailureRate.toFixed(2)}%</div>
-                    <div className="text-[9px] text-[var(--text-tertiary)]">across {hb.epochCount} epochs</div>
-                  </div>
-                  <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Current Epoch</div>
-                    <div className="text-lg font-mono" style={{ color: hb.currentFailureRate > hb.avgFailureRate ? 'var(--error)' : 'var(--success)' }}>{hb.currentFailureRate.toFixed(2)}%</div>
-                    <div className="text-[9px] text-[var(--text-tertiary)]">failure rate</div>
-                  </div>
-                  <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
-                    <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Failed TXs (Epoch)</div>
-                    <div className="text-lg font-mono text-[var(--error)]">{hb.formatNum(hb.currentFailedTx)}</div>
-                    <div className="text-[9px] text-[var(--text-tertiary)]">of {hb.formatNum(hb.currentTotalTx)} total</div>
-                  </div>
-                </div>
-                {/* Comparison callout */}
-                <div className="text-xs px-2.5 py-1.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)]">
-                  <span className="text-[var(--text-muted)]">Live failure rate </span>
-                  <span className="font-mono text-[var(--text-primary)]">{analysis.failureRate.toFixed(2)}%</span>
-                  <span className="text-[var(--text-muted)]"> is </span>
-                  <span className="font-mono" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{Math.abs(delta).toFixed(2)}pp {isAbove ? 'above' : 'below'}</span>
-                  <span className="text-[var(--text-muted)]"> the epoch average — </span>
-                  <span style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? 'Higher than usual' : 'Within normal range'}</span>
-                </div>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
+                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Epoch Avg Failure Rate</div>
+                <div className="text-lg font-mono text-[var(--text-primary)]">{hb.avgFailureRate.toFixed(2)}%</div>
+                <div className="text-[9px] text-[var(--text-tertiary)]">across {hb.epochCount} epochs</div>
               </div>
-              {/* Right: failure rate sparkline */}
-              <div className="flex flex-col items-center min-w-[120px]">
-                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1.5">Failure Rate Trend</div>
-                <div className="flex items-end gap-1 h-[60px]">
-                  {hb.allEpochs.map((e, i) => {
-                    const rate = 100 - e.successRate;
-                    const heightPct = (rate / hb.maxFailureRate) * 100;
-                    const isCurrent = i === hb.allEpochs.length - 1;
+              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
+                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Current Epoch</div>
+                <div className="text-lg font-mono" style={{ color: hb.currentFailureRate > hb.avgFailureRate ? 'var(--error)' : 'var(--success)' }}>{hb.currentFailureRate.toFixed(2)}%</div>
+                <div className="text-[9px] text-[var(--text-tertiary)]">failure rate</div>
+              </div>
+              <div className="bg-[var(--bg-tertiary)] rounded-lg p-2.5">
+                <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1">Failed TXs (Epoch)</div>
+                <div className="text-lg font-mono text-[var(--error)]">{hb.formatNum(hb.currentFailedTx)}</div>
+                <div className="text-[9px] text-[var(--text-tertiary)]">of {hb.formatNum(hb.currentTotalTx)} total</div>
+              </div>
+            </div>
+            {/* Comparison callout */}
+            <div className="text-xs px-2.5 py-1.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)] mb-4">
+              <span className="text-[var(--text-muted)]">Live failure rate </span>
+              <span className="font-mono text-[var(--text-primary)]">{analysis.failureRate.toFixed(2)}%</span>
+              <span className="text-[var(--text-muted)]"> is </span>
+              <span className="font-mono" style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{Math.abs(delta).toFixed(2)}pp {isAbove ? 'above' : 'below'}</span>
+              <span className="text-[var(--text-muted)]"> the epoch average — </span>
+              <span style={{ color: isAbove ? 'var(--error)' : 'var(--success)' }}>{isAbove ? 'Higher than usual' : 'Within normal range'}</span>
+            </div>
+            {/* Failure Rate Trend — enhanced chart */}
+            <div className="text-[9px] text-[var(--text-muted)] uppercase mb-2 flex items-center justify-between">
+              <span>Failure Rate by Epoch</span>
+              <div className="flex items-center gap-3 normal-case text-[var(--text-tertiary)]">
+                <span className="flex items-center gap-1"><span className="w-3 h-0 inline-block" style={{ borderTop: '1.5px solid var(--error)' }} /> failure rate</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-0 inline-block" style={{ borderTop: '1.5px dashed var(--accent-secondary)' }} /> avg ({hb.avgFailureRate.toFixed(2)}%)</span>
+                <span>{epochs.length} epochs</span>
+              </div>
+            </div>
+            <div className="relative rounded-lg bg-[var(--bg-tertiary)]" style={{ padding: '12px 12px 0 32px' }}>
+              {/* Y-axis labels */}
+              <div className="absolute left-0 top-3 bottom-8" style={{ width: '30px' }}>
+                {yTicks.map(v => (
+                  <div key={v} className="absolute right-1 text-[8px] font-mono text-[var(--text-muted)] -translate-y-1/2" style={{ top: `${100 - (v / maxR) * 100}%` }}>
+                    {v.toFixed(v === Math.floor(v) ? 0 : 1)}%
+                  </div>
+                ))}
+              </div>
+              {/* Chart area */}
+              <div className="relative" style={{ height: '140px' }}>
+                {/* Horizontal grid lines */}
+                {yTicks.map(v => (
+                  <div key={v} className="absolute left-0 right-0 border-t border-[var(--border-primary)]" style={{ top: `${100 - (v / maxR) * 100}%`, opacity: v === 0 ? 0.5 : 0.2 }} />
+                ))}
+                {/* Average reference line */}
+                <div className="absolute left-0 right-0" style={{ top: `${avgYPct}%`, borderTop: '1.5px dashed var(--accent-secondary)', opacity: 0.5 }}>
+                  <span className="absolute right-0 -top-3.5 text-[8px] font-mono text-[var(--accent-secondary)]">avg</span>
+                </div>
+                {/* SVG for area fill and line only */}
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="failGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--error)" stopOpacity="0.35" />
+                      <stop offset="60%" stopColor="var(--error)" stopOpacity="0.08" />
+                      <stop offset="100%" stopColor="var(--error)" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <path d={`${xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} L${xPcts[xPcts.length - 1]},100 L${xPcts[0]},100 Z`} fill="url(#failGrad)" />
+                  <path d={xPcts.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${yPcts[i]}`).join(' ')} fill="none" stroke="var(--error)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+                </svg>
+                {/* Dots — HTML so they don't stretch */}
+                {epochs.map((e, i) => {
+                  const isCurrent = i === epochs.length - 1;
+                  return (
+                    <div key={e.epoch} className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none" style={{ left: `${xPcts[i]}%`, top: `${yPcts[i]}%` }}>
+                      {isCurrent ? (
+                        <div className="w-2.5 h-2.5 rounded-full bg-[var(--error)] shadow-[0_0_8px_var(--error)]" />
+                      ) : (
+                        <div className="w-1 h-1 rounded-full bg-[var(--error)] opacity-40" />
+                      )}
+                    </div>
+                  );
+                })}
+                {/* Hover zones — invisible hit areas with crosshair + tooltip */}
+                <div className="absolute inset-0 flex">
+                  {epochs.map((e, i) => {
+                    const rate = rates[i];
+                    const isCurrent = i === epochs.length - 1;
+                    const dateStr = new Date(e.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    // Position tooltip toward center to avoid edge overflow
+                    const tooltipAlign = i < epochs.length * 0.2 ? 'left-0' : i > epochs.length * 0.8 ? 'right-0' : 'left-1/2 -translate-x-1/2';
                     return (
-                      <div key={e.epoch} className="flex-1 min-w-[14px] group relative cursor-default flex items-end" style={{ height: '60px' }}>
-                        <div className="w-full rounded-sm" style={{ height: `${Math.max(heightPct, 2)}%`, background: isCurrent ? 'var(--error)' : 'var(--text-tertiary)', opacity: isCurrent ? 1 : 0.3 + (i / hb.allEpochs.length) * 0.5 }} />
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                          <div className="bg-[var(--bg-primary)]/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
-                            <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
-                            <div className="space-y-0.5 text-[var(--text-muted)]">
-                              <div className="flex justify-between gap-3">Failure Rate <span className="font-mono text-[var(--error)]">{rate.toFixed(2)}%</span></div>
-                              <div className="flex justify-between gap-3">Failed <span className="font-mono text-[var(--text-primary)]">{hb.formatNum(e.failedTx)}</span></div>
-                              <div className="flex justify-between gap-3">Total <span className="font-mono text-[var(--text-secondary)]">{hb.formatNum(e.totalTransactions)}</span></div>
-                              <div className="flex justify-between gap-3">Success <span className="font-mono text-[var(--success)]">{e.successRate.toFixed(1)}%</span></div>
+                      <div key={e.epoch} className="flex-1 group relative cursor-crosshair" style={{ minWidth: 0 }}>
+                        {/* Vertical crosshair line */}
+                        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[1px] bg-[var(--text-muted)] opacity-0 group-hover:opacity-30 transition-opacity pointer-events-none" />
+                        {/* Enlarged hover dot */}
+                        <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full border border-[var(--error)] bg-[var(--bg-primary)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ top: `${yPcts[i]}%` }} />
+                        {/* Tooltip */}
+                        <div className={`absolute bottom-full ${tooltipAlign} mb-2 hidden group-hover:block z-30 pointer-events-none`}>
+                          <div className="bg-[var(--bg-primary)] border border-[var(--border-secondary)] rounded-lg px-3 py-2.5 shadow-2xl text-[10px] whitespace-nowrap">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="font-semibold text-[var(--text-primary)]">Epoch {e.epoch}</span>
+                              {isCurrent && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-[var(--error)]/15 text-[var(--error)]">current</span>}
+                              <span className="text-[var(--text-muted)]">{dateStr}</span>
+                            </div>
+                            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[var(--text-muted)]">
+                              <span>Failure Rate</span>
+                              <span className="font-mono text-right text-[var(--error)] font-medium">{rate.toFixed(2)}%</span>
+                              <span>Failed TXs</span>
+                              <span className="font-mono text-right text-[var(--text-primary)]">{hb.formatNum(e.failedTx)}</span>
+                              <span>Total TXs</span>
+                              <span className="font-mono text-right text-[var(--text-secondary)]">{hb.formatNum(e.totalTransactions)}</span>
+                              <span>Success Rate</span>
+                              <span className="font-mono text-right text-[var(--success)]">{e.successRate.toFixed(1)}%</span>
+                              <span className="pt-1 border-t border-[var(--border-primary)]">User TXs</span>
+                              <span className="font-mono text-right text-[var(--text-secondary)] pt-1 border-t border-[var(--border-primary)]">{hb.formatNum(e.nonVoteTransactions)}</span>
+                              <span>Avg Block Time</span>
+                              <span className="font-mono text-right text-[var(--text-tertiary)]">{e.avgBlockTime.toFixed(0)}ms</span>
                             </div>
                           </div>
                         </div>
@@ -1884,6 +2041,16 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                     );
                   })}
                 </div>
+              </div>
+              {/* X-axis date labels */}
+              <div className="relative h-5 mt-1" style={{ marginLeft: 0 }}>
+                {xLabels.map(({ i, label, epoch }) => (
+                  <div key={epoch} className="absolute -translate-x-1/2 text-[8px] text-[var(--text-muted)]" style={{ left: `${xPcts[i]}%` }}>
+                    <div className="text-center">
+                      <div className="text-[var(--text-tertiary)]">{label}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

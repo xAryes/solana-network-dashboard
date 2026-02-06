@@ -1917,6 +1917,7 @@ export interface EpochNetworkStats {
   medianJitoTip: number;
   avgFeeRatio: number; // priority/base ratio
   packedSlots: number;
+  startedAt: string;
   updatedAt: string;
 }
 
@@ -1927,7 +1928,7 @@ export interface NetworkHistoryData {
   error: string | null;
 }
 
-async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats | null> {
+export async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats | null> {
   try {
     const response = await fetch(`https://solanacompass.com/api/epoch-performance/${epoch}?limit=1`);
     if (!response.ok) return null;
@@ -1966,6 +1967,7 @@ async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats | null>
       medianJitoTip: aggregate.jito_med_tip || 0,
       avgFeeRatio: aggregate.avg_fee_ratio || 0,
       packedSlots: aggregate.packed_slots || numSlots,
+      startedAt: aggregate.created_at || new Date().toISOString(),
       updatedAt: aggregate.updated_at || new Date().toISOString(),
     };
   } catch (err) {
