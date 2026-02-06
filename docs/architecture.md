@@ -53,6 +53,10 @@
 │    │                                                  │
 │    ├── FailuresPage (/failures)                       │
 │    │   └── FailedTransactionsAnalysis                │
+│    │       ├── Row 1: Overview + Cost of Failures    │
+│    │       ├── Row 2: Error Types + Session Trend    │
+│    │       ├── All Failing Programs (accumulated)    │
+│    │       └── Top Failing Wallets                   │
 │    │                                                  │
 │    └── ValidatorsPage (/validators)                   │
 │        ├── TopValidatorsSection (paginated, logos)    │
@@ -127,4 +131,34 @@ Shared helpers (module-level):
   formatCompact(num)  — k/M/B formatting
   getTrend(values[])  — direction + pct change
   TrendBadge          — React component for colored trend display
+```
+
+## Failure Accumulation Data Flow
+
+```
+blocks (from useRecentBlocks)
+    │
+    ▼
+App() useEffect [blocks] ─── processes new blocks via processedSlotsRef
+    │
+    ├── accProgramFailuresRef  → per-program fail counts
+    ├── accProgramTotalsRef    → per-program total counts
+    ├── accPayerFailuresRef    → per-payer fail counts
+    ├── accErrorTypesRef       → error type distribution (parsed from tx.errorMsg JSON)
+    ├── accFailureSnapshotsRef → time-series [{time, rate, failed, total}] (max 120, 1/sec)
+    ├── accTotalFailedRef      → cumulative failed TX count
+    ├── accTotalBlocksRef      → cumulative block count
+    └── accTotalTxsRef         → cumulative TX count
+    │
+    ▼
+failureAccumulation (useMemo, triggered by failureRefreshCounter)
+    │
+    ├── programRates: sorted [{prog, failCount, total, rate}]
+    ├── topPayers: sorted [[address, count]]
+    ├── errorTypes: sorted [{type, count, pct}]
+    ├── snapshots: [{time, rate, failed, total}]
+    ├── totalFailed, totalBlocks, totalTxs, sessionStart
+    │
+    ▼
+FailuresPage → FailedTransactionsAnalysis (renders all failure cards)
 ```

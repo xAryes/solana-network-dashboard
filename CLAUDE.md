@@ -7,7 +7,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 ## Current State
 
 - **Branch**: main
-- **Status**: Dashboard is live on Vercel, all major sections functional. UI polish pass completed.
+- **Status**: Dashboard live on Vercel. Major UI/UX polish pass: context descriptions on all sections, interactive fee-by-position chart, failures page redesigned (hero strip, streamlined programs table, cost progress bars), Explorer card alignment. Uncommitted changes in App.tsx.
 - **Last updated**: 2026-02-06
 - **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
@@ -54,7 +54,24 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] X (Twitter) profile link → moved to footer (icon only, centered, on same line as credits)
 - [x] Rewrite README with full architecture documentation
 - [x] Update Vercel URL to solwatch.vercel.app
-- [ ] UI/UX polish — design isn't final, needs visual improvements
+- [x] Redesign Analytics cards: hero metrics, priority adoption bar, stacked fee/CU distribution bars
+- [x] Enhanced failure accumulation: error types, time-series snapshots, totalFailed
+- [x] Error Types breakdown card on Failures page (session-accumulated, colored bars)
+- [x] Session Failure Trend chart on Failures page (live SVG area chart with cumulative rate)
+- [x] Compact epoch tooltips (flow layout instead of 2-col grid)
+- [x] Epoch links changed from Solana Compass to Solscan
+- [x] Tooltip backgrounds: bg-primary → bg-black for consistency across all tooltips
+- [x] Mobile nav background: bg-primary → bg-black
+- [x] Fee stats refactored to lamport-precision (avgLamports, avgPriorityLamports, priorityCount, baseOnlyCount)
+- [x] CU stats: min/median/peak/total stats below capacity bar
+- [x] Context descriptions on ALL sections across all 4 pages (16+ descriptive subtitles)
+- [x] Failures page redesign: hero stats strip (4 metrics with dividers), remove epoch selector from programs, remove volume chart, remove composition chart
+- [x] Cost of Failures: CU waste + fee waste progress bars, avg per failed TX summary
+- [x] Interactive fee-by-position chart: click bar to select section, summary panel with fees/CU/success rate/top programs
+- [x] Explorer card alignment: flex-col + mt-auto for stacked bar alignment across 2-column grid
+- [x] CU capacity bar height matched to priority adoption bar (h-3 → h-2)
+- [x] Collapsible top failing wallets section
+- [ ] UI/UX polish — design isn't final, needs visual improvements ← CURRENT
 - [ ] Improve mobile experience (BlockDeepDive is heavy on small screens)
 - [ ] Add loading timeout / "no data" states for sections that stay empty
 
@@ -72,10 +89,19 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - **Module-level helpers**: `formatSOL`, `formatCompact`, `getTrend`, `TrendBadge` extracted from component to module level for reuse across split components.
 - **No 24h comparison**: User preferred session-only failure data. Removed historicalProgramFailures dependency.
 - **Minimal TX detail panel**: Removed signature, programs, balance changes, instructions, logs from selected TX. Keep only header + efficiency score + fee/compute breakdown + Solscan link.
+- **Tooltip backgrounds**: Use `bg-black/95` instead of `bg-[var(--bg-primary)]/95` — black gives better contrast with backdrop-blur
+- **Epoch links → Solscan**: Changed from `solanacompass.com/epochs/{epoch}` to `solscan.io/epoch/{epoch}` — Solscan has richer epoch detail pages
+- **Analytics card layout**: Hero metric (large font) + context line + progress bars + stacked distribution bars. Replaces old grid-of-small-numbers layout.
+- **Context descriptions everywhere**: Every section/card has a descriptive subtitle explaining what the data means. Onboarding-friendly.
+- **No epoch selector on failures**: Programs table compares vs current epoch's network-wide rate only. User found epoch navigation overcomplicated.
+- **Interactive fee-by-position**: Click bar to select section → summary panel with avg priority, Jito tip, total fees, avg CU, success rate, top programs as pill badges. Click again to deselect.
+- **Explorer card alignment**: `flex flex-col` + `mt-auto` pushes stacked bars to card bottom regardless of content height above.
+- **Failures volume chart removed**: Raw failure volume per epoch was "not interesting" — rate trends are more actionable.
+- **Failures composition chart removed**: Category composition per block group was too granular to be useful.
 
 ## Project Structure
 
-- `src/App.tsx` (~4300 lines) — All UI components + 4 page wrappers in one file
+- `src/App.tsx` (~4824 lines) — All UI components + 4 page wrappers in one file
 - `src/hooks/useSolanaData.ts` (~1900 lines) — All data fetching hooks + IndexedDB
 - `src/index.css` — CSS variables, animations, utility classes
 - `src/main.tsx` — Entry point with React Error Boundary + HashRouter
@@ -87,8 +113,8 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 | Path | Page | Contents |
 |------|------|----------|
 | `/` | DashboardPage | Overview, Epoch Progress, EpochSummaryCards (4 cards), Validators & Network, Supply, Leader Rotation, Limits |
-| `/explorer` | ExplorerPage | EpochDetailedAnalytics (fees/CU), Real-time Analytics, Block Deep Dive (with fee-by-position chart) |
-| `/failures` | FailuresPage | Failure Overview, Cost of Failures, All Failing Programs (session-accumulated), Top Failing Wallets |
+| `/explorer` | ExplorerPage | EpochDetailedAnalytics (fees/CU), Real-time Analytics (redesigned), Block Deep Dive (interactive fee-by-position chart) |
+| `/failures` | FailuresPage | Hero stats strip, Failure Rate by Epoch chart, Failing Programs (vs current epoch), 3-col insights (CU Waste/Block Position/Error Types), Cost of Failures, Session Trend, Top Wallets (collapsible) |
 | `/validators` | ValidatorsPage | Validator table (with health scores, skip rate, search), Geographic Distribution |
 
 ### RPC Strategy
@@ -139,7 +165,10 @@ Active state via react-router `isActive` — no scroll spy
 - This was a real bug in `BlockDeepDive` — `chartSummary` useMemo was after an early return
 
 ### Failure Accumulation
-- Refs (processedSlotsRef, accProgramFailuresRef, etc.) live in App(), NOT in FailedTransactionsAnalysis
+- Refs (processedSlotsRef, accProgramFailuresRef, accErrorTypesRef, accFailureSnapshotsRef, accTotalFailedRef, etc.) live in App(), NOT in FailedTransactionsAnalysis
+- `FailureAccumulation` type includes: programRates, topPayers, errorTypes, snapshots, totalFailed, totalBlocks, totalTxs, sessionStart
+- Error types parsed from `tx.errorMsg` JSON (InstructionError[1] → error name, or top-level key)
+- Snapshots: throttled to 1/sec, max 120 (~4 min), used for Session Failure Trend SVG area chart
 - Data passed to FailuresPage as `failureAccumulation` prop
 - Session-only accumulation (24h historical comparison removed)
 - This ensures failure data persists when navigating away from /failures
@@ -176,6 +205,11 @@ Active state via react-router `isActive` — no scroll spy
 - Session vs 24h failure rate chart — removed, user preferred session-only
 - TX detail sections (signature, programs, balance changes, instructions, logs) — removed from selected TX panel
 - Epoch History Table — removed from Explorer
+- Epoch selector on failures programs table — removed, simplified to current epoch comparison only
+- "Failed Transactions by Epoch (volume)" bar chart — removed, rate trends more useful than raw counts
+- "Failure Composition by category per block group" stacked chart — removed, too granular
+- `blockComposition` tracking in analysis useMemo — removed with composition chart
+- `selectedEpochIdx` state + `epochCorrelation` useMemo — removed with epoch selector
 
 ## Build & Deploy
 ```bash
