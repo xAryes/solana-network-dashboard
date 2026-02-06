@@ -51,7 +51,9 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] Leader rotation dynamics (consecutive counter bubble, faster animations, block counter)
 - [x] Validator search input in table pagination
 - [x] Rebrand to sol.watch (minimal text logo)
-- [x] X (Twitter) profile link in header
+- [x] X (Twitter) profile link → moved to footer (icon only, centered, on same line as credits)
+- [x] Rewrite README with full architecture documentation
+- [x] Update Vercel URL to solwatch.vercel.app
 - [ ] UI/UX polish — design isn't final, needs visual improvements
 - [ ] Improve mobile experience (BlockDeepDive is heavy on small screens)
 - [ ] Add loading timeout / "no data" states for sections that stay empty
@@ -104,8 +106,9 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 | Solana Compass | `GET solanacompass.com/api/epoch-performance/{epoch}?limit=1` | Historical epoch stats |
 
 ### Nav Structure
-Desktop: horizontal NavLink bar in header (4 items) + "by xAryes" + X link
+Desktop: horizontal NavLink bar in header (4 items) + "by xAryes"
 Mobile: fixed bottom NavLink bar (4 items)
+Footer: credits line (Helius, refresh rate, Solana Compass) + X icon — all on one row
 Active state via react-router `isActive` — no scroll spy
 
 ### Component Map

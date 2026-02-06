@@ -289,47 +289,49 @@ function App() {
 
       {/* Main Content - Routed Pages */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0">
-        <Routes>
-          <Route path="/" element={
-            <DashboardPage
-              stats={stats}
-              supply={supply}
-              validators={validators}
-              inflation={inflation}
-              cluster={cluster}
-              production={production}
-              leaderSchedule={leaderSchedule}
-              getValidatorName={getValidatorName}
-              getValidatorMetadata={getValidatorMetadata}
-              networkHistory={networkHistory}
-            />
-          } />
-          <Route path="/explorer" element={
-            <ExplorerPage
-              blocks={blocks}
-              transactions={transactions}
-              getValidatorName={getValidatorName}
-              networkHistory={networkHistory}
-            />
-          } />
-          <Route path="/failures" element={
-            <FailuresPage
-              blocks={blocks}
-              networkHistory={networkHistory}
-              failureAccumulation={failureAccumulation}
-            />
-          } />
-          <Route path="/validators" element={
-            <ValidatorsPage
-              topValidators={topValidators}
-              getValidatorName={getValidatorName}
-              getValidatorMetadata={getValidatorMetadata}
-              production={production}
-              validatorLocations={validatorLocations}
-              currentSlot={stats?.currentSlot || 0}
-            />
-          } />
-        </Routes>
+        <div key={location.pathname} className="page-transition">
+          <Routes location={location}>
+            <Route path="/" element={
+              <DashboardPage
+                stats={stats}
+                supply={supply}
+                validators={validators}
+                inflation={inflation}
+                cluster={cluster}
+                production={production}
+                leaderSchedule={leaderSchedule}
+                getValidatorName={getValidatorName}
+                getValidatorMetadata={getValidatorMetadata}
+                networkHistory={networkHistory}
+              />
+            } />
+            <Route path="/explorer" element={
+              <ExplorerPage
+                blocks={blocks}
+                transactions={transactions}
+                getValidatorName={getValidatorName}
+                networkHistory={networkHistory}
+              />
+            } />
+            <Route path="/failures" element={
+              <FailuresPage
+                blocks={blocks}
+                networkHistory={networkHistory}
+                failureAccumulation={failureAccumulation}
+              />
+            } />
+            <Route path="/validators" element={
+              <ValidatorsPage
+                topValidators={topValidators}
+                getValidatorName={getValidatorName}
+                getValidatorMetadata={getValidatorMetadata}
+                production={production}
+                validatorLocations={validatorLocations}
+                currentSlot={stats?.currentSlot || 0}
+              />
+            } />
+          </Routes>
+        </div>
       </main>
 
       {/* Footer */}
