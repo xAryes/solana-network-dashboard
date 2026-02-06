@@ -549,3 +549,31 @@ section {
 .animate-feed-item {
   animation: feedSlideIn 0.2s ease-out both;
 }
+
+/* Leader progress bar shimmer sweep */
+@keyframes leaderShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Leader rotation transition animations */
+@keyframes leaderCardEnter {
+  0% { opacity: 0; transform: translateY(12px) scale(0.97); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.005); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes leaderBorderFlash {
+  0% { border-color: var(--accent-tertiary); box-shadow: 0 0 16px color-mix(in srgb, var(--accent-tertiary) 35%, transparent); }
+  100% { border-color: color-mix(in srgb, var(--accent-tertiary) 30%, transparent); box-shadow: none; }
+}
+
+@keyframes queueItemShift {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes nextUpPromote {
+  0% { border-color: var(--accent-tertiary); box-shadow: 0 0 12px color-mix(in srgb, var(--accent-tertiary) 30%, transparent); background-color: color-mix(in srgb, var(--accent-tertiary) 8%, var(--bg-secondary)); }
+  100% { border-color: var(--border-primary); box-shadow: none; background-color: var(--bg-secondary); }
+}
