@@ -377,6 +377,7 @@ function App() {
                 production={production}
                 validatorLocations={validatorLocations}
                 currentSlot={stats?.currentSlot || 0}
+                leaderSchedule={leaderSchedule}
               />
             } />
           </Routes>
@@ -613,6 +614,16 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
         />
       </section>
 
+      {/* Upcoming Epoch Leaders */}
+      <section className="mb-8 sm:mb-10">
+        <SectionHeader title="Epoch Leader Schedule" subtitle="Pre-determined block producers for the current epoch — every validator's slot assignments are known in advance" />
+        <UpcomingLeadersTable
+          leaderSchedule={leaderSchedule}
+          getValidatorName={getValidatorName}
+          getValidatorMetadata={getValidatorMetadata}
+        />
+      </section>
+
       {/* Network Limits Reference */}
       <NetworkLimitsSection />
     </>
@@ -659,13 +670,14 @@ function FailuresPage({ blocks, networkHistory, failureAccumulation }: {
   );
 }
 
-function ValidatorsPage({ topValidators, getValidatorName, getValidatorMetadata, production, validatorLocations, currentSlot }: {
+function ValidatorsPage({ topValidators, getValidatorName, getValidatorMetadata, production, validatorLocations, currentSlot, leaderSchedule }: {
   topValidators: ReturnType<typeof useTopValidators>['validatorInfo'];
   getValidatorName: (pubkey: string) => string | null;
   getValidatorMetadata: (pubkey: string) => ValidatorMetadata | null;
   production: BlockProductionInfo | null;
   validatorLocations: { locations: Array<{ identity: string; voteAccount: string; name: string | null; lat: number; lng: number; city: string; country: string; stake: number; version: string }>; byCountry: Map<string, number>; byContinent: Map<string, number> } | null;
   currentSlot: number;
+  leaderSchedule: LeaderScheduleInfo | null;
 }) {
   return (
     <>
@@ -675,6 +687,11 @@ function ValidatorsPage({ topValidators, getValidatorName, getValidatorMetadata,
         getValidatorMetadata={getValidatorMetadata}
         production={production}
         currentSlot={currentSlot}
+      />
+      <EpochSlotDistribution
+        leaderSchedule={leaderSchedule}
+        getValidatorName={getValidatorName}
+        getValidatorMetadata={getValidatorMetadata}
       />
       <ValidatorGeography validatorLocations={validatorLocations} />
     </>
@@ -1814,6 +1831,238 @@ function LeaderSchedulePanel({
         <div className="text-center text-sm text-[var(--text-muted)] py-4">Loading upcoming leaders...</div>
       )}
     </div>
+  );
+}
+
+// Upcoming Leaders Table — shows next leaders grouped by validator with slot counts
+function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMetadata }: {
+  leaderSchedule: LeaderScheduleInfo | null;
+  getValidatorName: (pubkey: string) => string | null;
+  getValidatorMetadata: (pubkey: string) => ValidatorMetadata | null;
+}) {
+  if (!leaderSchedule) return <div className="card p-6 text-center text-sm text-[var(--text-muted)]">Loading leader schedule...</div>;
+
+  const { upcomingLeaders } = leaderSchedule;
+  if (upcomingLeaders.length === 0) return null;
+
+  // Group consecutive slots by same leader
+  const groups: { leader: string; slots: number[]; firstRelative: number }[] = [];
+  for (const entry of upcomingLeaders.slice(1)) { // skip current (slot 0)
+    const last = groups[groups.length - 1];
+    if (last && last.leader === entry.leader) {
+      last.slots.push(entry.slot);
+    } else {
+      groups.push({ leader: entry.leader, slots: [entry.slot], firstRelative: entry.relativeSlot });
+    }
+  }
+
+  const estimateTime = (relativeSlot: number) => {
+    const seconds = relativeSlot * 0.4;
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+    return `${(seconds / 3600).toFixed(1)}h`;
+  };
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border-primary)]">
+              <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Validator</th>
+              <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Slots</th>
+              <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">ETA</th>
+              <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell">Epoch Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.slice(0, 30).map((group, idx) => {
+              const metadata = getValidatorMetadata(group.leader);
+              const name = getValidatorName(group.leader) || `${group.leader.slice(0, 4)}...${group.leader.slice(-4)}`;
+              const logo = metadata?.logo;
+              const epochSlots = leaderSchedule.leaderCounts.get(group.leader) || 0;
+              const epochPct = leaderSchedule.totalEpochSlots > 0 ? (epochSlots / leaderSchedule.totalEpochSlots) * 100 : 0;
+              return (
+                <tr key={`${group.leader}-${group.slots[0]}`} className="border-b border-[var(--border-primary)]/30 hover:bg-[var(--bg-tertiary)]/30 transition-colors" style={{ animation: `rowSlideIn 0.15s ease-out ${idx * 0.02}s both` }}>
+                  <td className="py-2 px-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="relative flex-shrink-0">
+                        {logo ? (
+                          <img src={logo} alt={name} className="rounded-full object-cover" style={{ width: 28, height: 28 }}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} />
+                        ) : null}
+                        <div className={`rounded-full flex items-center justify-center text-white font-bold ${logo ? 'hidden' : ''}`}
+                          style={{ width: 28, height: 28, fontSize: 10, background: getAvatarGradient(group.leader) }}>
+                          {name.slice(0, 2).toUpperCase()}
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs text-[var(--text-primary)] font-medium truncate max-w-[160px]">{name}</div>
+                        <div className="text-[10px] text-[var(--text-muted)] font-mono">{group.leader.slice(0, 8)}...</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 text-center">
+                    <span className="inline-flex items-center justify-center min-w-[24px] px-1.5 py-0.5 rounded-full text-xs font-bold bg-[var(--accent)]/15 text-[var(--accent)]">
+                      {group.slots.length === 1 ? '1' : `×${group.slots.length}`}
+                    </span>
+                  </td>
+                  <td className="py-2 px-4 text-right">
+                    <span className="text-xs text-[var(--text-secondary)] font-mono">~{estimateTime(group.firstRelative)}</span>
+                  </td>
+                  <td className="py-2 px-4 text-right hidden sm:table-cell">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="w-16 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                        <div className="h-full rounded-full bg-[var(--accent)]/60" style={{ width: `${Math.min(100, epochPct * 10)}%` }} />
+                      </div>
+                      <span className="text-[10px] text-[var(--text-muted)] font-mono w-12 text-right">{epochPct.toFixed(2)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 py-2 border-t border-[var(--border-primary)]/30 text-[10px] text-[var(--text-muted)] flex justify-between">
+        <span>Showing next {Math.min(30, groups.length)} leader rotations ({upcomingLeaders.length - 1} slots)</span>
+        <span>Epoch {leaderSchedule.epoch} · {leaderSchedule.totalEpochSlots.toLocaleString()} total slots</span>
+      </div>
+    </div>
+  );
+}
+
+// Epoch Slot Distribution — shows how block production is distributed among validators for the epoch
+function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorMetadata }: {
+  leaderSchedule: LeaderScheduleInfo | null;
+  getValidatorName: (pubkey: string) => string | null;
+  getValidatorMetadata: (pubkey: string) => ValidatorMetadata | null;
+}) {
+  const [showAll, setShowAll] = useState(false);
+
+  if (!leaderSchedule || leaderSchedule.totalEpochSlots === 0) return null;
+
+  const { leaderCounts, totalEpochSlots, epoch } = leaderSchedule;
+
+  // Sort validators by slot count descending
+  const sorted = Array.from(leaderCounts.entries())
+    .map(([pubkey, slots]) => ({
+      pubkey,
+      slots,
+      pct: (slots / totalEpochSlots) * 100,
+      name: getValidatorName(pubkey) || `${pubkey.slice(0, 4)}...${pubkey.slice(-4)}`,
+      logo: getValidatorMetadata(pubkey)?.logo,
+    }))
+    .sort((a, b) => b.slots - a.slots);
+
+  const topCount = showAll ? sorted.length : 20;
+  const displayed = sorted.slice(0, topCount);
+  const maxSlots = sorted[0]?.slots || 1;
+
+  // Summary stats
+  const uniqueValidators = sorted.length;
+  const top10Pct = sorted.slice(0, 10).reduce((s, v) => s + v.pct, 0);
+  const top33Pct = sorted.slice(0, Math.ceil(sorted.length / 3)).reduce((s, v) => s + v.pct, 0);
+
+  return (
+    <section className="mb-8 sm:mb-10">
+      <SectionHeader title="Epoch Slot Distribution" subtitle={`How block production is allocated among ${uniqueValidators} validators for epoch ${epoch}`} />
+
+      {/* Summary strip */}
+      <div className="card p-4 mb-4">
+        <div className="flex flex-wrap gap-6 sm:gap-10 text-center">
+          <div>
+            <div className="text-lg font-bold text-[var(--text-primary)]">{uniqueValidators}</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Validators</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--text-primary)]">{totalEpochSlots.toLocaleString()}</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Total Slots</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--accent)]">{top10Pct.toFixed(1)}%</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Top 10 Share</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--accent-secondary)]">{top33Pct.toFixed(1)}%</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Top 1/3 Share</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--text-primary)]">{sorted[0]?.slots.toLocaleString() || '—'}</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Max (#{sorted[0]?.name.slice(0, 12) || '?'})</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Distribution table */}
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[var(--border-primary)]">
+                <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium w-8">#</th>
+                <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Validator</th>
+                <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Slots</th>
+                <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell" style={{ width: '40%' }}>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map((v, idx) => (
+                <tr key={v.pubkey} className="border-b border-[var(--border-primary)]/30 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
+                  <td className="py-1.5 px-4 text-[10px] text-[var(--text-muted)] font-mono">{idx + 1}</td>
+                  <td className="py-1.5 px-4">
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-shrink-0">
+                        {v.logo ? (
+                          <img src={v.logo} alt={v.name} className="rounded-full object-cover" style={{ width: 24, height: 24 }}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} />
+                        ) : null}
+                        <div className={`rounded-full flex items-center justify-center text-white font-bold ${v.logo ? 'hidden' : ''}`}
+                          style={{ width: 24, height: 24, fontSize: 9, background: getAvatarGradient(v.pubkey) }}>
+                          {v.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      </div>
+                      <span className="text-xs text-[var(--text-primary)] truncate max-w-[160px]">{v.name}</span>
+                    </div>
+                  </td>
+                  <td className="py-1.5 px-4 text-right">
+                    <span className="text-xs text-[var(--text-secondary)] font-mono">{v.slots.toLocaleString()}</span>
+                  </td>
+                  <td className="py-1.5 px-4 hidden sm:table-cell">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-2 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${(v.slots / maxSlots) * 100}%`,
+                            background: idx < 10 ? 'var(--accent)' : idx < 33 ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                            opacity: idx < 10 ? 1 : idx < 33 ? 0.7 : 0.4,
+                          }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-[var(--text-muted)] font-mono w-14 text-right">{v.pct.toFixed(2)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-4 py-2.5 border-t border-[var(--border-primary)]/30 flex justify-between items-center">
+          <span className="text-[10px] text-[var(--text-muted)]">
+            Showing {displayed.length} of {sorted.length} validators
+          </span>
+          {sorted.length > 20 && (
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className="text-[10px] text-[var(--accent)] hover:text-[var(--accent-secondary)] transition-colors"
+            >
+              {showAll ? 'Show top 20' : `Show all ${sorted.length}`}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

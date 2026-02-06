@@ -15,6 +15,7 @@ Built with React + TypeScript + Tailwind. Powered by Helius and Alchemy RPCs.
 - Validators & network stats
 - Supply & economics
 - Leader rotation with consecutive block counter
+- Epoch leader schedule table (upcoming leaders grouped by validator, ETA, epoch share)
 - Network limits & CU costs
 
 ### Explorer (`/explorer`)
@@ -33,6 +34,7 @@ Built with React + TypeScript + Tailwind. Powered by Helius and Alchemy RPCs.
 
 ### Validators (`/validators`)
 - Validator table with search, logos, stake %, commission, skip rate, health scores
+- Epoch slot distribution (per-validator slot allocation, top-10/top-1/3 share, expandable)
 - Geographic distribution by country/city
 
 ## Tech Stack

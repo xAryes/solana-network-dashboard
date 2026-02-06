@@ -1101,6 +1101,8 @@ export interface LeaderScheduleInfo {
   currentSlot: number;
   upcomingLeaders: LeaderScheduleEntry[];
   leaderCounts: Map<string, number>;
+  totalEpochSlots: number;
+  epoch: number;
 }
 
 // Get leader schedule for upcoming slots
@@ -1148,23 +1150,25 @@ export function useLeaderSchedule(currentSlot: number) {
   useEffect(() => {
     if (!currentSlot || !cachedScheduleRef.current) return;
 
-    const { leaderSchedule, epochStartSlot } = cachedScheduleRef.current;
+    const { leaderSchedule, epochStartSlot, epoch } = cachedScheduleRef.current;
     const upcomingLeaders: LeaderScheduleEntry[] = [];
     const leaderCounts = new Map<string, number>();
     const slotToLeader = new Map<number, string>();
+    let totalEpochSlots = 0;
 
     for (const [leader, slots] of Object.entries(leaderSchedule)) {
       leaderCounts.set(leader, slots.length);
+      totalEpochSlots += slots.length;
       for (const slotOffset of slots) {
         const absoluteSlot = epochStartSlot + slotOffset;
-        if (absoluteSlot >= currentSlot && absoluteSlot < currentSlot + 100) {
+        if (absoluteSlot >= currentSlot && absoluteSlot < currentSlot + 200) {
           slotToLeader.set(absoluteSlot, leader);
         }
       }
     }
 
     const sortedSlots = Array.from(slotToLeader.keys()).sort((a, b) => a - b);
-    for (const slot of sortedSlots.slice(0, 20)) {
+    for (const slot of sortedSlots.slice(0, 100)) {
       const leader = slotToLeader.get(slot)!;
       upcomingLeaders.push({
         slot,
@@ -1173,7 +1177,7 @@ export function useLeaderSchedule(currentSlot: number) {
       });
     }
 
-    setSchedule({ currentSlot, upcomingLeaders, leaderCounts });
+    setSchedule({ currentSlot, upcomingLeaders, leaderCounts, totalEpochSlots, epoch });
   }, [currentSlot]);
 
   return { schedule, isLoading };
