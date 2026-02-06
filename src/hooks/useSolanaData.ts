@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
-// RPC endpoints - Alchemy primary, Helius fallback
+// RPC endpoints - Helius primary (premium), Alchemy fallback
+const HELIUS_API_KEY = 'REDACTED_HELIUS_KEY';
+const HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+const HELIUS_API = `https://api.helius.xyz/v0`;
 const ALCHEMY_RPC = 'https://solana-mainnet.g.alchemy.com/v2/REDACTED_ALCHEMY_KEY';
-const HELIUS_RPC = 'https://mainnet.helius-rpc.com/?api-key=REDACTED_HELIUS_KEY_OLD';
 
 // Primary and fallback connections
 let primaryConnection: Connection | null = null;
 let fallbackConnection: Connection | null = null;
-let useAlchemy = true; // Track which provider is active
+let useHelius = true; // Helius premium is primary
 
 // Solana block limits
 export const SOLANA_LIMITS = {
@@ -157,14 +159,14 @@ export interface BlockProductionInfo {
 
 // Connection management with automatic fallback
 function getConnection(): Connection {
-  if (useAlchemy) {
+  if (useHelius) {
     if (!primaryConnection) {
-      primaryConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
+      primaryConnection = new Connection(HELIUS_RPC, { commitment: 'confirmed' });
     }
     return primaryConnection;
   } else {
     if (!fallbackConnection) {
-      fallbackConnection = new Connection(HELIUS_RPC, { commitment: 'confirmed' });
+      fallbackConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
     }
     return fallbackConnection;
   }
@@ -255,12 +257,25 @@ export function useRecentBlocks(count: number = 10) {
 
       const blockPromises = slots.map(async (s): Promise<SlotData | null> => {
         try {
-          const block = await connection.getBlock(s, {
-            maxSupportedTransactionVersion: 0,
-            transactionDetails: 'full',
-            rewards: false,
+          // Use Helius jsonParsed encoding for pre-parsed instruction data
+          const response = await fetch(HELIUS_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: `block-${s}`,
+              method: 'getBlock',
+              params: [s, {
+                encoding: 'jsonParsed',
+                maxSupportedTransactionVersion: 0,
+                transactionDetails: 'full',
+                rewards: false,
+              }],
+            }),
           });
 
+          const json = await response.json();
+          const block = json?.result;
           if (!block) return null;
 
           let totalFees = 0;
@@ -276,42 +291,34 @@ export function useRecentBlocks(count: number = 10) {
               const cu = tx.meta?.computeUnitsConsumed ?? 200000;
               const numSignatures = tx.transaction.signatures.length;
 
-              // Extract program IDs and account keys
+              // With jsonParsed, program IDs come directly from instructions
               const programs: string[] = [];
               const message = tx.transaction.message;
-              let accountKeys: string[] = [];
 
-              // Handle both legacy and versioned transactions
-              if ('accountKeys' in message) {
-                // Legacy transaction
-                accountKeys = message.accountKeys.map((k: { toBase58?: () => string }) =>
-                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
+              // Extract account keys (jsonParsed returns them as objects with pubkey)
+              let accountKeys: string[] = [];
+              if (message.accountKeys) {
+                accountKeys = message.accountKeys.map((k: { pubkey?: string }) =>
+                  typeof k === 'string' ? k : k.pubkey ?? String(k)
                 );
-                // Program IDs are typically the accounts that are invoked
-                // We can identify them from the compiled instructions
-                if ('compiledInstructions' in message) {
-                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
-                    const programId = accountKeys[ix.programIdIndex];
-                    if (programId && !programs.includes(programId)) {
-                      programs.push(programId);
-                    }
-                  }
-                } else if ('instructions' in message) {
-                  for (const ix of (message as { instructions: { programIdIndex: number }[] }).instructions) {
-                    const programId = accountKeys[ix.programIdIndex];
-                    if (programId && !programs.includes(programId)) {
-                      programs.push(programId);
-                    }
+              }
+
+              // Extract programs from parsed instructions
+              if (message.instructions) {
+                for (const ix of message.instructions) {
+                  // jsonParsed gives programId directly as a string
+                  const programId = ix.programId || (ix.program && accountKeys[ix.programIdIndex]);
+                  if (programId && !programs.includes(programId)) {
+                    programs.push(programId);
                   }
                 }
-              } else if ('staticAccountKeys' in message) {
-                // Versioned transaction (v0)
-                accountKeys = (message as { staticAccountKeys: { toBase58?: () => string }[] }).staticAccountKeys.map((k) =>
-                  typeof k === 'string' ? k : k.toBase58?.() ?? String(k)
-                );
-                if ('compiledInstructions' in message) {
-                  for (const ix of (message as { compiledInstructions: { programIdIndex: number }[] }).compiledInstructions) {
-                    const programId = accountKeys[ix.programIdIndex];
+              }
+
+              // Also extract from inner instructions (important for CPI calls)
+              if (tx.meta?.innerInstructions) {
+                for (const inner of tx.meta.innerInstructions) {
+                  for (const ix of inner.instructions) {
+                    const programId = ix.programId;
                     if (programId && !programs.includes(programId)) {
                       programs.push(programId);
                     }
@@ -336,7 +343,7 @@ export function useRecentBlocks(count: number = 10) {
                 }
                 // Track SOL movement for the fee payer (excluding fee)
                 if (i === 0) {
-                  solMovement = balanceChange + fee; // Add back the fee to get net movement
+                  solMovement = balanceChange + fee;
                 }
               }
 
@@ -370,7 +377,7 @@ export function useRecentBlocks(count: number = 10) {
             totalFees,
             successRate: txCount > 0 ? (successCount / txCount) * 100 : 100,
             totalCU,
-            transactions, // Keep all transactions for full block visualization
+            transactions,
           };
         } catch {
           return null;
@@ -602,7 +609,7 @@ export interface PriorityFeeInfo {
   available: boolean;
 }
 
-// Get priority fees - requires Developer+ Helius plan
+// Get priority fees via Helius getPriorityFeeEstimate (premium)
 export function usePriorityFees() {
   const [fees, setFees] = useState<PriorityFeeInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -611,69 +618,99 @@ export function usePriorityFees() {
   useEffect(() => {
     const fetchFees = async () => {
       try {
-        const connection = getConnection();
+        // Use Helius getPriorityFeeEstimate for accurate percentile data
+        const response = await fetch(HELIUS_RPC, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'priority-fees',
+            method: 'getPriorityFeeEstimate',
+            params: [{ options: { includeAllPriorityFeeLevels: true } }],
+          }),
+        });
 
-        // Try to fetch recent prioritization fees
-        // This requires Developer+ Helius plan
-        const recentFees = await connection.getRecentPrioritizationFees();
+        const data = await response.json();
+        const levels = data?.result?.priorityFeeLevels;
 
-        if (recentFees && recentFees.length > 0) {
-          // Extract fee values and sort
-          const feeValues = recentFees
+        if (levels) {
+          setFees({
+            min: Math.round(levels.min || 0),
+            median: Math.round(levels.medium || 0),
+            p75: Math.round(levels.high || 0),
+            p90: Math.round(levels.veryHigh || 0),
+            max: Math.round(levels.unsafeMax || 0),
+            recommended: Math.round(levels.medium || 0),
+            available: true,
+          });
+          setIsAvailable(true);
+        } else {
+          // Fallback to standard RPC method
+          const connection = getConnection();
+          const recentFees = await connection.getRecentPrioritizationFees();
+          const feeValues = (recentFees || [])
             .map(f => f.prioritizationFee)
             .filter(f => f > 0)
             .sort((a, b) => a - b);
 
           if (feeValues.length > 0) {
-            const min = feeValues[0];
-            const max = feeValues[feeValues.length - 1];
-            const median = feeValues[Math.floor(feeValues.length / 2)];
-            const p75 = feeValues[Math.floor(feeValues.length * 0.75)];
-            const p90 = feeValues[Math.floor(feeValues.length * 0.90)];
-            // Recommended: slightly above median for good inclusion
-            const recommended = Math.ceil(median * 1.2);
-
             setFees({
-              min,
-              median,
-              p75,
-              p90,
-              max,
-              recommended,
+              min: feeValues[0],
+              median: feeValues[Math.floor(feeValues.length / 2)],
+              p75: feeValues[Math.floor(feeValues.length * 0.75)],
+              p90: feeValues[Math.floor(feeValues.length * 0.90)],
+              max: feeValues[feeValues.length - 1],
+              recommended: Math.ceil(feeValues[Math.floor(feeValues.length / 2)] * 1.2),
               available: true,
             });
-            setIsAvailable(true);
-          } else {
-            // No fees found (all zero)
-            setFees({
-              min: 0,
-              median: 0,
-              p75: 0,
-              p90: 0,
-              max: 0,
-              recommended: 0,
-              available: true,
-            });
-            setIsAvailable(true);
           }
-        } else {
-          setIsAvailable(false);
+          setIsAvailable(feeValues.length > 0);
         }
         setIsLoading(false);
       } catch (err) {
-        // Method not available on this plan
-        console.warn('Priority fees not available (requires Developer+ plan):', err);
+        console.warn('Priority fees fetch error:', err);
         setIsAvailable(false);
         setIsLoading(false);
       }
     };
 
     fetchFees();
-    const interval = setInterval(fetchFees, 10000); // Every 10s for fees
+    const interval = setInterval(fetchFees, 10000);
     return () => clearInterval(interval);
   }, []);
 
   return { fees, isLoading, isAvailable };
+}
+
+// Helius Enhanced Transaction data
+export interface EnhancedTransaction {
+  signature: string;
+  type: string; // SWAP, TRANSFER, NFT_SALE, etc.
+  source: string; // Jupiter, Orca, Raydium, etc.
+  description: string;
+  fee: number;
+  feePayer: string;
+  timestamp: number;
+  nativeTransfers: Array<{ fromUserAccount: string; toUserAccount: string; amount: number }>;
+  tokenTransfers: Array<{ fromUserAccount: string; toUserAccount: string; mint: string; tokenAmount: number; tokenStandard?: string }>;
+}
+
+// Fetch enriched transaction data from Helius Enhanced Transactions API
+export async function fetchEnhancedTransactions(signatures: string[]): Promise<EnhancedTransaction[]> {
+  if (signatures.length === 0) return [];
+  // API accepts up to 100 signatures per call
+  const batch = signatures.slice(0, 100);
+  try {
+    const response = await fetch(`${HELIUS_API}/transactions?api-key=${HELIUS_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions: batch }),
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
 }
 
 // Helper to format SOL
@@ -934,56 +971,254 @@ export function useLeaderSchedule(currentSlot: number) {
   return { schedule, isLoading };
 }
 
-// Live Transaction Stream via WebSocket
-export interface LiveTransaction {
+// ============================================
+// ENHANCED TRANSACTION STREAM (Helius WebSocket)
+// ============================================
+
+export interface StreamTransaction {
   signature: string;
+  slot: number;
   timestamp: number;
-  slot?: number;
-  err?: boolean;
+  success: boolean;
+  fee: number;
+  feePayer: string;
+  programs: string[];
+  computeUnits: number;
+  jitoTip: number;
+  solMovement: number;
+  tokenTransfers: Array<{ mint: string; from: string; to: string; amount: number }>;
+  nativeTransfers: Array<{ from: string; to: string; amount: number }>;
 }
 
-export function useLiveTransactions(maxTx: number = 50) {
-  const [transactions, setTransactions] = useState<LiveTransaction[]>([]);
+export interface StreamStats {
+  total: number;
+  failed: number;
+  successRate: number;
+  avgFee: number;
+  totalVolume: number;
+}
+
+export function useTransactionStream(maxTx: number = 100) {
+  const [transactions, setTransactions] = useState<StreamTransaction[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [txPerSecond, setTxPerSecond] = useState(0);
+  const [stats, setStats] = useState<StreamStats>({ total: 0, failed: 0, successRate: 100, avgFee: 0, totalVolume: 0 });
+  const [fallbackMode, setFallbackMode] = useState(false);
+
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectDelayRef = useRef(2000);
+  const bufferRef = useRef<StreamTransaction[]>([]);
+  const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tpsTimestampsRef = useRef<number[]>([]);
+  const statsAccRef = useRef({ total: 0, failed: 0, totalFee: 0, totalVolume: 0 });
 
   useEffect(() => {
+    const wsUrl = HELIUS_RPC.replace('https://', 'wss://');
+
+    // Flush buffer to state every 100ms
+    flushIntervalRef.current = setInterval(() => {
+      if (bufferRef.current.length > 0) {
+        const batch = bufferRef.current.splice(0);
+        setTransactions(prev => [...batch, ...prev].slice(0, maxTx));
+      }
+
+      // Calculate TPS from 5-second sliding window
+      const now = Date.now();
+      const window = 5000;
+      tpsTimestampsRef.current = tpsTimestampsRef.current.filter(t => now - t < window);
+      setTxPerSecond(Math.round(tpsTimestampsRef.current.length / (window / 1000)));
+
+      // Update stats
+      const acc = statsAccRef.current;
+      setStats({
+        total: acc.total,
+        failed: acc.failed,
+        successRate: acc.total > 0 ? ((acc.total - acc.failed) / acc.total) * 100 : 100,
+        avgFee: acc.total > 0 ? acc.totalFee / acc.total : 0,
+        totalVolume: acc.totalVolume,
+      });
+    }, 100);
+
     const connect = () => {
-      // Use Helius WebSocket for live logs
-      const wsUrl = HELIUS_RPC.replace('https://', 'wss://');
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setIsConnected(true);
-        // Subscribe to all transactions (logs)
+        reconnectDelayRef.current = 2000; // Reset backoff on success
+
+        // Try Enhanced WebSocket first: transactionSubscribe
         ws.send(JSON.stringify({
           jsonrpc: '2.0',
           id: 1,
-          method: 'logsSubscribe',
-          params: [
-            { mentions: ['11111111111111111111111111111111'] }, // System program - catches most txs
-            { commitment: 'confirmed' }
-          ]
+          method: 'transactionSubscribe',
+          params: [{
+            vote: false,
+            failed: true,
+          }, {
+            commitment: 'confirmed',
+            encoding: 'jsonParsed',
+            transactionDetails: 'full',
+            maxSupportedTransactionVersion: 0,
+          }],
         }));
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+
+          // Check for subscription error → fallback to logsSubscribe
+          if (data.id === 1 && data.error) {
+            console.warn('transactionSubscribe not available, falling back to logsSubscribe:', data.error);
+            setFallbackMode(true);
+            ws.send(JSON.stringify({
+              jsonrpc: '2.0',
+              id: 2,
+              method: 'logsSubscribe',
+              params: ['all', { commitment: 'confirmed' }],
+            }));
+            return;
+          }
+
+          // Handle Enhanced transactionSubscribe notifications
+          if (data.method === 'transactionNotification' && data.params?.result) {
+            const result = data.params.result;
+            const tx = result.transaction;
+            const meta = tx?.meta;
+            const message = tx?.transaction?.message;
+            if (!message) return;
+
+            const signature = result.signature || tx?.transaction?.signatures?.[0] || '';
+            const slot = result.slot || 0;
+
+            // Extract account keys
+            let accountKeys: string[] = [];
+            if (message.accountKeys) {
+              accountKeys = message.accountKeys.map((k: { pubkey?: string } | string) =>
+                typeof k === 'string' ? k : k.pubkey ?? String(k)
+              );
+            }
+
+            // Extract programs from instructions + inner instructions
+            const programs: string[] = [];
+            if (message.instructions) {
+              for (const ix of message.instructions) {
+                const pid = ix.programId || (ix.programIdIndex !== undefined ? accountKeys[ix.programIdIndex] : undefined);
+                if (pid && !programs.includes(pid)) programs.push(pid);
+              }
+            }
+            if (meta?.innerInstructions) {
+              for (const inner of meta.innerInstructions) {
+                for (const ix of inner.instructions) {
+                  const pid = ix.programId;
+                  if (pid && !programs.includes(pid)) programs.push(pid);
+                }
+              }
+            }
+
+            // Detect Jito tips + SOL movement
+            let jitoTip = 0;
+            let solMovement = 0;
+            const preBalances = meta?.preBalances ?? [];
+            const postBalances = meta?.postBalances ?? [];
+            for (let i = 0; i < accountKeys.length; i++) {
+              const change = (postBalances[i] ?? 0) - (preBalances[i] ?? 0);
+              if (JITO_TIP_ACCOUNTS.has(accountKeys[i]) && change > 0) {
+                jitoTip += change;
+              }
+              if (i === 0) {
+                solMovement = change + (meta?.fee ?? 0);
+              }
+            }
+
+            // Extract token transfers from parsed spl-token instructions
+            const tokenTransfers: StreamTransaction['tokenTransfers'] = [];
+            const nativeTransfers: StreamTransaction['nativeTransfers'] = [];
+
+            const extractTransfers = (instructions: Array<{ program?: string; programId?: string; parsed?: { type?: string; info?: Record<string, unknown> } }>) => {
+              for (const ix of instructions) {
+                const prog = ix.program || ix.programId;
+                if ((prog === 'spl-token' || prog === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' || prog === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb') && ix.parsed) {
+                  if (ix.parsed.type === 'transfer' || ix.parsed.type === 'transferChecked') {
+                    const info = ix.parsed.info as Record<string, unknown>;
+                    tokenTransfers.push({
+                      mint: (info.mint as string) || '',
+                      from: (info.source as string) || (info.authority as string) || '',
+                      to: (info.destination as string) || '',
+                      amount: Number(info.tokenAmount && typeof info.tokenAmount === 'object' ? (info.tokenAmount as { amount?: string }).amount : info.amount) || 0,
+                    });
+                  }
+                }
+                if ((prog === 'system' || prog === '11111111111111111111111111111111') && ix.parsed?.type === 'transfer') {
+                  const info = ix.parsed.info as Record<string, unknown>;
+                  nativeTransfers.push({
+                    from: (info.source as string) || '',
+                    to: (info.destination as string) || '',
+                    amount: Number(info.lamports) || 0,
+                  });
+                }
+              }
+            };
+
+            if (message.instructions) extractTransfers(message.instructions);
+            if (meta?.innerInstructions) {
+              for (const inner of meta.innerInstructions) {
+                extractTransfers(inner.instructions);
+              }
+            }
+
+            const streamTx: StreamTransaction = {
+              signature,
+              slot,
+              timestamp: Date.now(),
+              success: meta?.err === null || meta?.err === undefined,
+              fee: meta?.fee ?? 0,
+              feePayer: accountKeys[0] || '',
+              programs,
+              computeUnits: meta?.computeUnitsConsumed ?? 0,
+              jitoTip,
+              solMovement,
+              tokenTransfers,
+              nativeTransfers,
+            };
+
+            bufferRef.current.push(streamTx);
+            tpsTimestampsRef.current.push(Date.now());
+
+            // Accumulate stats
+            statsAccRef.current.total++;
+            if (!streamTx.success) statsAccRef.current.failed++;
+            statsAccRef.current.totalFee += streamTx.fee;
+            statsAccRef.current.totalVolume += Math.abs(solMovement);
+            return;
+          }
+
+          // Handle logsSubscribe fallback notifications
           if (data.method === 'logsNotification' && data.params?.result?.value) {
             const { signature, err } = data.params.result.value;
-            if (signature) {
-              setTransactions(prev => {
-                const newTx: LiveTransaction = {
-                  signature,
-                  timestamp: Date.now(),
-                  err: !!err,
-                };
-                return [newTx, ...prev].slice(0, maxTx);
-              });
-            }
+            if (!signature) return;
+
+            const streamTx: StreamTransaction = {
+              signature,
+              slot: data.params.result.context?.slot ?? 0,
+              timestamp: Date.now(),
+              success: !err,
+              fee: 0,
+              feePayer: '',
+              programs: [],
+              computeUnits: 0,
+              jitoTip: 0,
+              solMovement: 0,
+              tokenTransfers: [],
+              nativeTransfers: [],
+            };
+
+            bufferRef.current.push(streamTx);
+            tpsTimestampsRef.current.push(Date.now());
+            statsAccRef.current.total++;
+            if (!streamTx.success) statsAccRef.current.failed++;
           }
         } catch {
           // Ignore parse errors
@@ -992,8 +1227,9 @@ export function useLiveTransactions(maxTx: number = 50) {
 
       ws.onclose = () => {
         setIsConnected(false);
-        // Reconnect after 5s
-        reconnectTimeoutRef.current = setTimeout(connect, 5000);
+        const delay = Math.min(reconnectDelayRef.current, 30000);
+        reconnectTimeoutRef.current = setTimeout(connect, delay);
+        reconnectDelayRef.current = Math.min(delay * 1.5, 30000);
       };
 
       ws.onerror = () => {
@@ -1004,16 +1240,13 @@ export function useLiveTransactions(maxTx: number = 50) {
     connect();
 
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      if (wsRef.current) wsRef.current.close();
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (flushIntervalRef.current) clearInterval(flushIntervalRef.current);
     };
   }, [maxTx]);
 
-  return { transactions, isConnected };
+  return { transactions, isConnected, txPerSecond, stats, fallbackMode };
 }
 
 // Token Price Info
@@ -1117,6 +1350,117 @@ export function useTokenPrices() {
   return { prices, isLoading };
 }
 
+// ============================================
+// TOKEN METADATA (Helius DAS API)
+// ============================================
+
+export interface TokenMetadata {
+  name: string;
+  symbol: string;
+  image?: string;
+  decimals?: number;
+}
+
+// Persistent cache across hook instances
+const tokenMetadataCache = new Map<string, TokenMetadata>();
+const pendingFetches = new Set<string>();
+
+// Pre-seed common tokens
+const KNOWN_TOKENS: Record<string, TokenMetadata> = {
+  'So11111111111111111111111111111111111111112': { name: 'Solana', symbol: 'SOL', decimals: 9 },
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': { name: 'USD Coin', symbol: 'USDC', decimals: 6 },
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': { name: 'Tether', symbol: 'USDT', decimals: 6 },
+  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': { name: 'Jupiter', symbol: 'JUP', decimals: 6 },
+  'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL': { name: 'Jito', symbol: 'JTO', decimals: 9 },
+  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { name: 'Bonk', symbol: 'BONK', decimals: 5 },
+  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': { name: 'Marinade SOL', symbol: 'mSOL', decimals: 9 },
+  'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': { name: 'Jito Staked SOL', symbol: 'jitoSOL', decimals: 9 },
+};
+
+// Initialize cache with known tokens
+for (const [mint, meta] of Object.entries(KNOWN_TOKENS)) {
+  tokenMetadataCache.set(mint, meta);
+}
+
+export async function fetchTokenMetadataBatch(mints: string[]): Promise<void> {
+  // Filter out already cached and in-flight
+  const toFetch = mints.filter(m => !tokenMetadataCache.has(m) && !pendingFetches.has(m));
+  if (toFetch.length === 0) return;
+
+  // Mark as pending
+  for (const m of toFetch) pendingFetches.add(m);
+
+  // Batch in chunks of 100
+  for (let i = 0; i < toFetch.length; i += 100) {
+    const batch = toFetch.slice(i, i + 100);
+    try {
+      const response = await fetch(HELIUS_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'das-batch',
+          method: 'getAssetBatch',
+          params: { ids: batch },
+        }),
+      });
+
+      const json = await response.json();
+      const results = json?.result;
+      if (Array.isArray(results)) {
+        for (const asset of results) {
+          if (!asset?.id) continue;
+          const meta: TokenMetadata = {
+            name: asset.content?.metadata?.name || asset.id.slice(0, 8) + '...',
+            symbol: asset.content?.metadata?.symbol || '???',
+            image: asset.content?.links?.image || undefined,
+            decimals: asset.token_info?.decimals ?? undefined,
+          };
+          tokenMetadataCache.set(asset.id, meta);
+        }
+      }
+    } catch (err) {
+      console.warn('DAS getAssetBatch failed:', err);
+    }
+
+    // Unmark pending
+    for (const m of batch) pendingFetches.delete(m);
+  }
+}
+
+export function useTokenMetadata(mints: string[]) {
+  const [, setTick] = useState(0);
+  const prevMintsRef = useRef<string>('');
+
+  useEffect(() => {
+    const key = mints.join(',');
+    if (key === prevMintsRef.current) return;
+    prevMintsRef.current = key;
+
+    const unknown = mints.filter(m => !tokenMetadataCache.has(m));
+    if (unknown.length > 0) {
+      fetchTokenMetadataBatch(unknown).then(() => setTick(t => t + 1));
+    }
+  }, [mints]);
+
+  const getTokenInfo = useCallback((mint: string): TokenMetadata | null => {
+    return tokenMetadataCache.get(mint) || null;
+  }, []);
+
+  return { metadata: tokenMetadataCache, getTokenInfo };
+}
+
+// Format token amount with decimals
+export function formatTokenAmount(rawAmount: number, decimals?: number): string {
+  const dec = decimals ?? 0;
+  const amount = rawAmount / Math.pow(10, dec);
+  if (amount >= 1_000_000) return (amount / 1_000_000).toFixed(2) + 'M';
+  if (amount >= 1_000) return (amount / 1_000).toFixed(2) + 'K';
+  if (amount >= 1) return amount.toFixed(dec > 4 ? 2 : Math.min(dec, 4));
+  if (amount > 0) return amount.toPrecision(4);
+  return '0';
+}
+
 // Top Validators Info
 export interface ValidatorDetails {
   votePubkey: string;
@@ -1174,7 +1518,7 @@ export function useTopValidators(limit: number = 20) {
         // Sort by stake descending
         allValidators.sort((a, b) => b.activatedStake - a.activatedStake);
 
-        const topValidators = allValidators.slice(0, limit);
+        const topValidators = limit > 0 ? allValidators.slice(0, limit) : allValidators;
         const totalStake = allValidators.reduce((sum, v) => sum + v.activatedStake, 0);
         const avgCommission = topValidators.length > 0
           ? topValidators.reduce((sum, v) => sum + v.commission, 0) / topValidators.length
