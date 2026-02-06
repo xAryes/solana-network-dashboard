@@ -381,15 +381,17 @@ function App() {
           )}
 
           {/* Credits */}
-          <div className="flex flex-col items-center gap-3 text-[10px] sm:text-xs text-[var(--text-muted)]">
+          <div className="flex items-center justify-center flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-[10px] sm:text-xs text-[var(--text-muted)]">
+            <span className="hidden sm:inline">Real-time Solana mainnet data via Helius Premium RPC + Enhanced APIs</span>
+            <span className="sm:hidden">Powered by Helius</span>
+            <span className="text-[var(--text-tertiary)]">•</span>
+            <span>Data refreshes every ~4 blocks (~1.6s)</span>
+            <span className="text-[var(--text-tertiary)]">•</span>
+            <span>Epoch data via <a href="https://solanacompass.com" target="_blank" rel="noopener noreferrer" className="text-[var(--accent-secondary)] hover:underline">Solana Compass</a></span>
+            <span className="text-[var(--text-tertiary)]">•</span>
             <a href="https://x.com/chainhera" target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors" title="Follow on X">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
             </a>
-            <div className="flex items-center flex-wrap justify-center gap-x-3 sm:gap-x-4 gap-y-1">
-              <span>Real-time Solana mainnet data via Helius</span>
-              <span className="text-[var(--text-tertiary)]">•</span>
-              <span>Epoch data via <a href="https://solanacompass.com" target="_blank" rel="noopener noreferrer" className="text-[var(--accent-secondary)] hover:underline">Solana Compass</a></span>
-            </div>
           </div>
         </div>
       </footer>
