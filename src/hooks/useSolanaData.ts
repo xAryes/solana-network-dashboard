@@ -206,6 +206,7 @@ export interface BlockProductionInfo {
   totalBlocksProduced: number;
   totalSlotsSkipped: number;
   skipRate: number;
+  byIdentity: Record<string, [number, number]>; // identity -> [leaderSlots, blocksProduced]
 }
 
 // Connection management with automatic fallback
@@ -773,11 +774,18 @@ export function useBlockProduction() {
         const skipped = totalSlots - totalProduced;
         const skipRate = totalSlots > 0 ? (skipped / totalSlots) * 100 : 0;
 
+        // Build byIdentity map
+        const byIdentity: Record<string, [number, number]> = {};
+        for (const [identity, [slots, produced]] of Object.entries(prodInfo.value.byIdentity)) {
+          byIdentity[identity] = [slots, produced];
+        }
+
         setProduction({
           totalSlots,
           totalBlocksProduced: totalProduced,
           totalSlotsSkipped: skipped,
           skipRate,
+          byIdentity,
         });
         setIsLoading(false);
       } catch (err) {
@@ -1594,6 +1602,7 @@ export interface HistoricalBlockData {
   totalCU: number;
   cuPercent: number;
   categories: Record<string, number>; // tx count by category
+  programFailures?: Record<string, { failed: number; total: number }>; // per-program failure counts
 }
 
 export interface HistoricalStats {
@@ -1662,6 +1671,19 @@ export async function storeBlockData(block: SlotData): Promise<void> {
       categories[cat] = (categories[cat] || 0) + 1;
     }
 
+    // Per-program failure counts (skip core programs)
+    const programFailures: Record<string, { failed: number; total: number }> = {};
+    for (const t of block.transactions) {
+      for (const prog of t.programs) {
+        const info = getProgramInfo(prog);
+        if (info.category !== 'core') {
+          if (!programFailures[prog]) programFailures[prog] = { failed: 0, total: 0 };
+          programFailures[prog].total++;
+          if (!t.success) programFailures[prog].failed++;
+        }
+      }
+    }
+
     const data: HistoricalBlockData = {
       slot: block.slot,
       timestamp: block.blockTime ? block.blockTime * 1000 : Date.now(),
@@ -1674,6 +1696,7 @@ export async function storeBlockData(block: SlotData): Promise<void> {
       totalCU,
       cuPercent: (totalCU / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100,
       categories,
+      programFailures,
     };
 
     store.put(data);
@@ -1807,6 +1830,63 @@ export function useHistoricalStats(hoursBack: number = 24) {
   }, [hoursBack]);
 
   return { stats, isLoading };
+}
+
+// Get historical program failure data from IndexedDB
+export async function getHistoricalProgramFailures(hoursBack: number = 24): Promise<Record<string, { failed: number; total: number }> | null> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const index = store.index('timestamp');
+
+    const cutoff = Date.now() - (hoursBack * 60 * 60 * 1000);
+    const range = IDBKeyRange.lowerBound(cutoff);
+
+    return new Promise((resolve) => {
+      const aggregated: Record<string, { failed: number; total: number }> = {};
+
+      index.openCursor(range).onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          const block = cursor.value as HistoricalBlockData;
+          if (block.programFailures) {
+            for (const [prog, counts] of Object.entries(block.programFailures)) {
+              if (!aggregated[prog]) aggregated[prog] = { failed: 0, total: 0 };
+              aggregated[prog].failed += counts.failed;
+              aggregated[prog].total += counts.total;
+            }
+          }
+          cursor.continue();
+        } else {
+          resolve(Object.keys(aggregated).length > 0 ? aggregated : null);
+        }
+      };
+    });
+  } catch (err) {
+    console.warn('Failed to get historical program failures:', err);
+    return null;
+  }
+}
+
+// Hook for historical program failures
+export function useHistoricalProgramFailures(hoursBack: number = 24) {
+  const [data, setData] = useState<Record<string, { failed: number; total: number }> | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const result = await getHistoricalProgramFailures(hoursBack);
+      setData(result);
+      setIsLoading(false);
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, 60000); // refresh every 60s
+    return () => clearInterval(interval);
+  }, [hoursBack]);
+
+  return { data, isLoading };
 }
 
 // ============================================
