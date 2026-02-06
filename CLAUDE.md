@@ -9,7 +9,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - **Branch**: main
 - **Status**: Dashboard is live on Vercel, all major sections functional. UI polish pass completed.
 - **Last updated**: 2026-02-06
-- **Live URL**: https://solana-network-dashboard.vercel.app/
+- **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
 
 ## Task Progress
