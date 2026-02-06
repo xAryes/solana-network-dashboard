@@ -51,7 +51,7 @@ Single-file architecture: all components live in `App.tsx` for simplicity and fa
 
 ```
                     ┌─────────────────┐
-                    │     App.tsx      │
+                    │     App.tsx     │
                     │  (all hooks at  │
                     │   top level)    │
                     └───────┬─────────┘
