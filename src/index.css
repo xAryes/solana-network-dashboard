@@ -27,6 +27,44 @@
   --success: #22c55e;
   --error: #ef4444;
   --warning: #f59e0b;
+
+  /* Header/nav/tooltip glass */
+  --header-bg: rgba(0, 0, 0, 0.7);
+  --header-border: rgba(255, 255, 255, 0.06);
+  --nav-bg: rgba(0, 0, 0, 0.95);
+  --bg-tooltip: rgba(0, 0, 0, 0.95);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #ebebed;
+  --bg-card: #ffffff;
+  --bg-hover: #ebebed;
+
+  --border-primary: #d6d6d8;
+  --border-secondary: #c4c4c7;
+  --border-accent: #b0b0b5;
+
+  --text-primary: #1a1a2e;
+  --text-secondary: #44445a;
+  --text-tertiary: #6e6e82;
+  --text-muted: #9898a8;
+
+  /* Deeper accents for light backgrounds */
+  --accent: #7c3aed;
+  --accent-secondary: #0284c7;
+  --accent-tertiary: #059669;
+
+  --success: #16a34a;
+  --error: #dc2626;
+  --warning: #d97706;
+
+  --header-bg: rgba(245, 245, 247, 0.8);
+  --header-border: rgba(0, 0, 0, 0.08);
+  --nav-bg: rgba(245, 245, 247, 0.95);
+  --bg-tooltip: rgba(255, 255, 255, 0.95);
 }
 
 * {
@@ -73,7 +111,7 @@ body {
   color: var(--bg-primary);
 }
 
-/* Card styles — glass morphism (modern mode, default) */
+/* Card styles — glass morphism (dark mode default) */
 .card {
   background: rgba(13, 13, 13, 0.6);
   backdrop-filter: blur(16px) saturate(130%);
@@ -88,7 +126,7 @@ body {
   overflow: hidden;
 }
 
-/* Subtle top-edge gradient shimmer */
+/* Subtle top-edge gradient shimmer (dark only) */
 .card::before {
   content: '';
   position: absolute;
@@ -104,17 +142,17 @@ body {
   border-color: var(--border-secondary);
 }
 
-/* Classic mode — solid opaque cards */
-[data-visual="classic"] .card {
+/* Light mode — clean white cards with subtle shadows */
+[data-theme="light"] .card {
   background: var(--bg-card);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  box-shadow: none;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-[data-visual="classic"] .card::before {
+[data-theme="light"] .card::before {
   display: none;
 }
 
@@ -239,9 +277,9 @@ section, main [id] {
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-[data-visual="classic"] .card:hover {
+[data-theme="light"] .card:hover {
   border-color: var(--border-secondary);
-  box-shadow: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 /* Enhanced card with glow effect */
@@ -259,16 +297,17 @@ section, main [id] {
   box-shadow: 0 0 30px rgba(196, 181, 253, 0.06);
 }
 
-[data-visual="classic"] .card-glow {
+[data-theme="light"] .card-glow {
   background: var(--bg-card);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border: 1px solid var(--border-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
-[data-visual="classic"] .card-glow:hover {
+[data-theme="light"] .card-glow:hover {
   border-color: var(--accent);
-  box-shadow: 0 0 20px rgba(196, 181, 253, 0.1);
+  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.1);
 }
 
 /* Stat card animations */
@@ -591,13 +630,39 @@ section, main [id] {
   background: radial-gradient(ellipse 70% 60% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.5) 100%);
 }
 
-/* Classic mode — hide ambient background entirely */
-[data-visual="classic"] .sol-ambient {
+/* Light mode — hide ambient background */
+[data-theme="light"] .sol-ambient {
   display: none;
 }
 
-/* Visual mode toggle button */
-.visual-toggle {
+/* Light mode — glass utility override */
+[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* Light mode — table row hover */
+[data-theme="light"] .table-row-hover:hover {
+  background: linear-gradient(90deg, var(--bg-hover) 0%, transparent 100%);
+}
+
+/* Light mode — scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-track { background: var(--bg-primary); }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--border-secondary); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: var(--border-accent); }
+
+/* Light mode — stat card hover */
+[data-theme="light"] .stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Light mode — skeleton loader */
+[data-theme="light"] .skeleton {
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+}
+
+/* Theme toggle button */
+.theme-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -611,20 +676,22 @@ section, main [id] {
   cursor: pointer;
 }
 
-.visual-toggle:hover {
+.theme-toggle:hover {
   color: var(--accent);
   background: rgba(153, 69, 255, 0.08);
   border-color: rgba(153, 69, 255, 0.2);
 }
 
-[data-visual="classic"] .visual-toggle {
+[data-theme="light"] .theme-toggle {
   background: var(--bg-secondary);
   border-color: var(--border-primary);
+  color: var(--text-muted);
 }
 
-[data-visual="classic"] .visual-toggle:hover {
+[data-theme="light"] .theme-toggle:hover {
   color: var(--accent);
   border-color: var(--accent);
+  background: rgba(124, 58, 237, 0.06);
 }
 
 /* Subtle grid background */

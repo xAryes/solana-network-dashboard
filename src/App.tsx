@@ -183,13 +183,13 @@ function SidebarNav() {
 }
 
 function App() {
-  const [visualMode, setVisualMode] = useState<'modern' | 'classic'>(() =>
-    (localStorage.getItem('sol-visual') as 'modern' | 'classic') || 'modern'
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    (localStorage.getItem('sol-theme') as 'dark' | 'light') || 'dark'
   );
-  const toggleVisual = useCallback(() => {
-    setVisualMode(prev => {
-      const next = prev === 'modern' ? 'classic' : 'modern';
-      localStorage.setItem('sol-visual', next);
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('sol-theme', next);
       return next;
     });
   }, []);
@@ -356,7 +356,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)]" data-visual={visualMode}>
+    <div className="min-h-screen bg-[var(--bg-primary)]" data-theme={theme}>
       {/* Solana ambient background — hidden in classic mode via CSS */}
       <div className="sol-ambient" aria-hidden="true">
         <div className="sol-orb sol-orb-1" />
@@ -376,7 +376,7 @@ function App() {
       </div>
 
       {/* Header */}
-      <header className="border-b border-[var(--border-primary)]/50 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-black/70 backdrop-blur-xl z-30" style={{ WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
+      <header className="border-b px-4 sm:px-6 py-3 sm:py-4 sticky top-0 backdrop-blur-xl z-30" style={{ backgroundColor: 'var(--header-bg)', borderColor: 'var(--header-border)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 relative">
           {/* Left side */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -440,11 +440,11 @@ function App() {
             </div>
             {/* Visual mode toggle */}
             <button
-              onClick={toggleVisual}
-              className="visual-toggle"
-              title={visualMode === 'modern' ? 'Switch to classic' : 'Switch to modern'}
+              onClick={toggleTheme}
+              className="theme-toggle"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
-              {visualMode === 'modern' ? (
+              {theme === 'dark' ? (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>
               ) : (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -456,7 +456,7 @@ function App() {
 
       {/* Mobile Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 z-20 md:hidden">
-        <div className="bg-black/95 backdrop-blur-md border-t border-[var(--border-primary)]">
+        <div className="backdrop-blur-md border-t border-[var(--border-primary)]" style={{ backgroundColor: 'var(--nav-bg)' }}>
           <div className="flex items-center justify-around px-2 py-2">
             {PAGES.map(page => (
               <NavLink
@@ -1259,7 +1259,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
                       </div>
                       {/* Tooltip — positioned full-width relative to chart container */}
                       <div className="absolute bottom-full left-0 right-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
-                        <div className="bg-black border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-2xl text-[8px] font-mono">
+                        <div className="bg-[var(--bg-tooltip)] border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-2xl text-[8px] font-mono">
                           <div className="flex items-center justify-between mb-1">
                             <span className="font-semibold text-[var(--text-primary)] text-[9px]">E{e.epoch}{isCurrent ? '*' : ''}</span>
                             <span className="text-[var(--text-muted)] text-[9px] font-sans">{formatEpochDate(e.startedAt)}</span>
@@ -1578,7 +1578,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
                   <span className="font-mono w-12 text-right flex-shrink-0 text-[var(--text-muted)]">{formatSOL(eTotal)}</span>
                   {/* Tooltip */}
                   <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
-                    <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                    <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
                       <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
                         <span>Base fees</span><span className="font-mono text-[var(--text-tertiary)] text-right">{formatSOL(e.baseFees)} SOL ({eTotal > 0 ? ((e.baseFees / eTotal) * 100).toFixed(0) : 0}%)</span>
@@ -1628,7 +1628,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
                   <span className="font-mono w-11 text-right flex-shrink-0 text-[var(--text-muted)]">{packedPct.toFixed(0)}% pk</span>
                   {/* Tooltip */}
                   <div className="absolute left-1/4 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-30 pointer-events-none">
-                    <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                    <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded px-2.5 py-2 shadow-xl text-[9px] whitespace-nowrap">
                       <div className="font-medium text-[var(--text-primary)] mb-1">Epoch {e.epoch}</div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--text-muted)]">
                         <span>CU fill</span><span className="font-mono text-right" style={{ color: fillPct > 60 ? 'var(--warning)' : 'var(--success)' }}>{fillPct.toFixed(1)}%</span>
@@ -2147,7 +2147,7 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
                       <div className="relative inline-flex group">
                         <HealthGauge score={healthResult.score} grade={healthResult.grade} size={28} />
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-40 pointer-events-none">
-                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                          <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
                             <div className="font-medium text-[var(--text-primary)] mb-1">Health Score: <span style={{ color: GRADE_COLORS[healthResult.grade] }}>{healthResult.score} ({healthResult.grade})</span></div>
                             <div className="space-y-0.5 text-[var(--text-muted)]">
                               <div>Skip rate (40%): <span className="font-mono" style={{ color: healthResult.skipScore >= 80 ? 'var(--success)' : healthResult.skipScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{healthResult.skipScore}</span></div>
@@ -2622,7 +2622,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                         <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[1px] bg-[var(--text-muted)] opacity-0 group-hover:opacity-30 transition-opacity pointer-events-none" />
                         <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full border border-[var(--error)] bg-[var(--bg-primary)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ top: `${yPcts[i]}%` }} />
                         <div className={`absolute bottom-full ${tooltipAlign} mb-2 hidden group-hover:block z-30 pointer-events-none`}>
-                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2.5 shadow-2xl text-[10px] whitespace-nowrap">
+                          <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2.5 shadow-2xl text-[10px] whitespace-nowrap">
                             <div className="flex items-center gap-2 mb-1.5">
                               <span className="font-semibold text-[var(--text-primary)]">Epoch {e.epoch}</span>
                               {isCurrent && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-[var(--error)]/15 text-[var(--error)]">current</span>}
@@ -4026,7 +4026,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                             ...((!isLeftEdge && !isRightEdge) ? { left: '50%' } : {}),
                           }}
                         >
-                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl text-[9px]" style={{ minWidth: '260px', maxWidth: '320px', whiteSpace: 'normal' }}>
+                          <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded-lg px-2.5 py-2 shadow-xl text-[9px]" style={{ minWidth: '260px', maxWidth: '320px', whiteSpace: 'normal' }}>
                             {/* Row 1: Position, Status, Type */}
                             <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                               <span className="font-mono font-bold text-[var(--text-primary)]">#{i + 1}</span>
@@ -4412,7 +4412,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                   {/* Hover tooltip (only when nothing selected) */}
                   {selectedFeeBuckets.size === 0 && (
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
-                      <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
+                      <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
                         <div className="font-medium text-[var(--text-primary)] mb-0.5">Txs {bucket.start}–{bucket.end}</div>
                         <div className="text-[var(--text-muted)]">Avg fee: <span className="font-mono text-[var(--text-primary)]">{formatNumber(Math.round(total))} L</span></div>
                         <div className="text-[8px] text-[var(--text-tertiary)] mt-0.5">click for details</div>
@@ -4991,7 +4991,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                       <HealthGauge score={h.score} grade={h.grade} size={32} />
                       {/* Hover tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-40 pointer-events-none">
-                        <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                        <div className="bg-[var(--bg-tooltip)] backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
                           <div className="font-medium text-[var(--text-primary)] mb-1">Health Score: <span style={{ color: GRADE_COLORS[h.grade] }}>{h.score} ({h.grade})</span></div>
                           <div className="space-y-0.5 text-[var(--text-muted)]">
                             <div>Skip rate (40%): <span className="font-mono" style={{ color: h.skipScore >= 80 ? 'var(--success)' : h.skipScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{h.skipScore}</span></div>
