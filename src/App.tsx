@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   useNetworkStats,
@@ -475,7 +475,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Current Slot" value={stats.currentSlot.toLocaleString()} subtext="live" accent />
           <StatCard label="Block Height" value={stats.blockHeight.toLocaleString()} subtext="cumulative" />
-          <StatCard label="TPS" value={stats.tps.toLocaleString()} subtext="current rate" color="green" />
+          <StatCard label="TPS" value={stats.tps.toLocaleString()} subtext="current rate" color="green" renderValue={<SmoothedValue value={stats.tps} decimals={0} />} />
           <StatCard label="Avg Slot Time" value={`${stats.avgSlotTime}ms`} subtext={`target 400ms • ${stats.avgSlotTime > 500 ? 'slow' : 'normal'}`} />
           <StatCard label="Epoch" value={`${stats.epochInfo.epoch}`} subtext={`${stats.epochInfo.epochProgress.toFixed(1)}% complete`} />
           <StatCard
@@ -487,7 +487,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
         <div className="mt-3 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)]">
           <span className="text-xs text-[var(--text-muted)]">Total Network Transactions <span className="text-[var(--text-tertiary)]">(all-time count)</span></span>
           <span className="font-mono text-sm text-[var(--accent-secondary)]">
-            {stats.transactionCount ? stats.transactionCount.toLocaleString() : '—'}
+            {stats.transactionCount ? <AnimatedCounter value={stats.transactionCount} tps={stats.tps} /> : '—'}
           </span>
         </div>
       </section>
@@ -621,6 +621,8 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
           leaderSchedule={leaderSchedule}
           getValidatorName={getValidatorName}
           getValidatorMetadata={getValidatorMetadata}
+          production={production}
+          currentSlot={stats.currentSlot}
         />
       </section>
 
@@ -638,9 +640,9 @@ function ExplorerPage({ blocks, transactions, getValidatorName, networkHistory }
 }) {
   return (
     <>
-      <EpochDetailedAnalytics data={networkHistory} />
       <AnalyticsSection blocks={blocks} transactions={transactions} />
       <BlockDeepDive blocks={blocks} getValidatorName={getValidatorName} />
+      <EpochDetailedAnalytics data={networkHistory} />
     </>
   );
 }
@@ -702,6 +704,59 @@ function ValidatorsPage({ topValidators, getValidatorName, getValidatorMetadata,
 // SHARED COMPONENTS
 // ============================================
 
+function SmoothedValue({ value, decimals = 0 }: { value: number; decimals?: number }) {
+  const displayRef = useRef(value);
+  const [display, setDisplay] = useState(value);
+  const targetRef = useRef(value);
+  const frameRef = useRef<number>(0);
+  const lastFrameRef = useRef(performance.now());
+
+  useEffect(() => { targetRef.current = value; }, [value]);
+
+  useEffect(() => {
+    const tick = (now: number) => {
+      const elapsed = Math.min((now - lastFrameRef.current) / 1000, 0.1);
+      lastFrameRef.current = now;
+      const diff = targetRef.current - displayRef.current;
+      displayRef.current += diff * Math.min(1, 3 * elapsed);
+      setDisplay(displayRef.current);
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, []);
+
+  return <>{display.toFixed(decimals)}</>;
+}
+
+function AnimatedCounter({ value, tps }: { value: number; tps: number }) {
+  const displayRef = useRef(value);
+  const [display, setDisplay] = useState(value);
+  const targetRef = useRef(value);
+  const rateRef = useRef(tps);
+  const frameRef = useRef<number>(0);
+  const lastRef = useRef(performance.now());
+
+  useEffect(() => { targetRef.current = value; }, [value]);
+  useEffect(() => { rateRef.current = tps; }, [tps]);
+
+  useEffect(() => {
+    const tick = (now: number) => {
+      const elapsed = Math.min((now - lastRef.current) / 1000, 0.1);
+      lastRef.current = now;
+      const drift = targetRef.current - displayRef.current;
+      const correction = drift * 0.8 * elapsed;
+      displayRef.current += rateRef.current * elapsed + correction;
+      setDisplay(displayRef.current);
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, []);
+
+  return <>{Math.round(display).toLocaleString()}</>;
+}
+
 function SectionHeader({ title, subtitle, noMargin }: { title: string; subtitle?: string; noMargin?: boolean }) {
   return (
     <div className={`flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3 ${noMargin ? '' : 'mb-3 sm:mb-4'}`}>
@@ -711,7 +766,7 @@ function SectionHeader({ title, subtitle, noMargin }: { title: string; subtitle?
   );
 }
 
-function StatCard({ label, value, subtext, accent, color }: { label: string; value: string; subtext?: string; accent?: boolean; color?: 'purple' | 'green' | 'blue' }) {
+function StatCard({ label, value, subtext, accent, color, renderValue }: { label: string; value: string; subtext?: string; accent?: boolean; color?: 'purple' | 'green' | 'blue'; renderValue?: ReactNode }) {
   const colorClass = color === 'green' ? 'text-[var(--accent-tertiary)]'
     : color === 'blue' ? 'text-[var(--accent-secondary)]'
     : accent ? 'text-[var(--accent)]'
@@ -725,7 +780,7 @@ function StatCard({ label, value, subtext, accent, color }: { label: string; val
   return (
     <div className={`card p-4 stat-card border-l-2 ${borderColor}`}>
       <div className="text-[10px] sm:text-xs text-[var(--text-muted)] uppercase tracking-wider mb-1 truncate">{label}</div>
-      <div className={`text-base sm:text-lg font-mono ${colorClass} truncate`}>{value}</div>
+      <div className={`text-base sm:text-lg font-mono ${colorClass} truncate`}>{renderValue ?? value}</div>
       {subtext && <div className="text-[10px] sm:text-xs text-[var(--text-tertiary)] mt-1 truncate">{subtext}</div>}
     </div>
   );
@@ -744,13 +799,13 @@ function LimitCard({ label, value, subtext, highlight }: { label: string; value:
 }
 
 function formatTimeRemaining(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 24) {
-    const days = Math.floor(hours / 24);
-    return `${days}d ${hours % 24}h`;
-  }
-  return `${hours}h ${minutes}m`;
+  const secs = Math.floor(seconds % 60);
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  return `${minutes}m ${secs}s`;
 }
 
 // CU Distribution analysis
@@ -1584,7 +1639,7 @@ function AnalyticsSection({
               {/* Fee distribution — stacked bar (pushed to bottom) */}
               <div className="mt-auto">
                 <div className="text-[10px] text-[var(--text-muted)] mb-1.5">Fee Distribution</div>
-                <div className="h-7 rounded-lg overflow-hidden flex">
+                <div className="h-5 rounded-lg overflow-hidden flex">
                   {feePercentiles.buckets.map(b => {
                     const pct = feeStats.count > 0 ? (b.count / feeStats.count) * 100 : 0;
                     return pct > 0 ? (
@@ -1653,7 +1708,7 @@ function AnalyticsSection({
               {cuDistribution.length > 0 && (
                 <div className="mt-auto">
                   <div className="text-[10px] text-[var(--text-muted)] mb-1.5">TX Compute Distribution</div>
-                  <div className="h-7 rounded-lg overflow-hidden flex">
+                  <div className="h-5 rounded-lg overflow-hidden flex">
                     {cuDistribution.map(cat => cat.percent > 0 ? (
                       <div key={cat.name} className="h-full flex items-center justify-center first:rounded-l-lg last:rounded-r-lg transition-all duration-300" style={{ width: `${Math.max(cat.percent, 1.5)}%`, backgroundColor: cat.color, opacity: 0.85 }} title={`${cat.name} (${cat.range}): ${cat.count.toLocaleString()} txs (${cat.percent.toFixed(1)}%)`}>
                         {cat.percent > 6 && <span className="text-[9px] font-mono text-black/80 font-semibold">{cat.percent.toFixed(0)}%</span>}
@@ -1735,10 +1790,33 @@ function LeaderSchedulePanel({
 
   const currentLeader = leaders[0];
   const upcomingLeaders = leaders.slice(1);
-  const estimateTime = (relativeSlot: number) => {
-    const seconds = (relativeSlot * 0.4);
-    if (seconds < 60) return `~${Math.round(seconds)}s`;
-    return `~${(seconds / 60).toFixed(1)}m`;
+
+  const LiveETA = ({ relativeSlot }: { relativeSlot: number }) => {
+    const [display, setDisplay] = useState(() => relativeSlot * 0.4);
+    const targetRef = useRef(relativeSlot * 0.4);
+    const displayRef = useRef(relativeSlot * 0.4);
+    const frameRef = useRef<number>(0);
+    const lastRef = useRef(performance.now());
+
+    useEffect(() => { targetRef.current = relativeSlot * 0.4; }, [relativeSlot]);
+
+    useEffect(() => {
+      const tick = (now: number) => {
+        const elapsed = Math.min((now - lastRef.current) / 1000, 0.1);
+        lastRef.current = now;
+        displayRef.current -= elapsed;
+        const diff = targetRef.current - displayRef.current;
+        displayRef.current += diff * 0.05;
+        if (displayRef.current < 0) displayRef.current = 0;
+        setDisplay(displayRef.current);
+        frameRef.current = requestAnimationFrame(tick);
+      };
+      frameRef.current = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(frameRef.current);
+    }, []);
+
+    if (display < 60) return <>~{Math.round(display)}s</>;
+    return <>~{(display / 60).toFixed(1)}m</>;
   };
 
   // Avatar helper
@@ -1786,7 +1864,7 @@ function LeaderSchedulePanel({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold text-[var(--text-primary)] truncate">{currentLeader.name}</span>
               {currentLeader.location && <span className="text-[10px] text-[var(--text-tertiary)]">{formatLocation(currentLeader.location)}</span>}
-              {totalBlocksProduced > 0 && <span className="text-[9px] text-[var(--text-muted)] font-mono">#{totalBlocksProduced}</span>}
+              {totalBlocksProduced > 0 && <span className="text-[9px] text-[var(--text-muted)] font-mono">#<SmoothedValue value={totalBlocksProduced} /></span>}
             </div>
             {/* 4-slot progress bar */}
             <div className="flex items-center gap-2 mt-1.5">
@@ -1821,7 +1899,7 @@ function LeaderSchedulePanel({
             >
               <Avatar pubkey={leader.leader} logo={leader.logo} name={leader.name} size={20} />
               <span className="text-[10px] text-[var(--text-secondary)] truncate max-w-[80px]">{leader.shortName}</span>
-              <span className="text-[9px] text-[var(--text-muted)] font-mono">{estimateTime(leader.relativeSlot)}</span>
+              <span className="text-[9px] text-[var(--text-muted)] font-mono"><LiveETA relativeSlot={leader.relativeSlot} /></span>
             </div>
           ))}
         </div>
@@ -1835,10 +1913,12 @@ function LeaderSchedulePanel({
 }
 
 // Upcoming Leaders Table — shows next leaders grouped by validator with slot counts
-function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMetadata }: {
+function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMetadata, production, currentSlot }: {
   leaderSchedule: LeaderScheduleInfo | null;
   getValidatorName: (pubkey: string) => string | null;
   getValidatorMetadata: (pubkey: string) => ValidatorMetadata | null;
+  production?: BlockProductionInfo | null;
+  currentSlot?: number;
 }) {
   if (!leaderSchedule) return <div className="card p-6 text-center text-sm text-[var(--text-muted)]">Loading leader schedule...</div>;
 
@@ -1863,6 +1943,8 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
     return `${(seconds / 3600).toFixed(1)}h`;
   };
 
+  const gradeColors: Record<string, string> = { A: 'var(--success)', B: 'var(--accent-tertiary)', C: 'var(--accent-secondary)', D: 'var(--warning)', F: 'var(--error)' };
+
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
@@ -1872,6 +1954,8 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
               <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Validator</th>
               <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Slots</th>
               <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">ETA</th>
+              <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell">Health</th>
+              <th className="text-left py-2.5 px-3 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden md:table-cell">Location</th>
               <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell">Epoch Share</th>
             </tr>
           </thead>
@@ -1882,6 +1966,8 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
               const logo = metadata?.logo;
               const epochSlots = leaderSchedule.leaderCounts.get(group.leader) || 0;
               const epochPct = leaderSchedule.totalEpochSlots > 0 ? (epochSlots / leaderSchedule.totalEpochSlots) * 100 : 0;
+              const healthResult = production && currentSlot ? computeHealthScore({ nodePubkey: group.leader, commission: 0, lastVote: currentSlot, delinquent: false }, production, currentSlot) : null;
+              const location = metadata?.location;
               return (
                 <tr key={`${group.leader}-${group.slots[0]}`} className="border-b border-[var(--border-primary)]/30 hover:bg-[var(--bg-tertiary)]/30 transition-colors" style={{ animation: `rowSlideIn 0.15s ease-out ${idx * 0.02}s both` }}>
                   <td className="py-2 px-4">
@@ -1909,6 +1995,19 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
                   </td>
                   <td className="py-2 px-4 text-right">
                     <span className="text-xs text-[var(--text-secondary)] font-mono">~{estimateTime(group.firstRelative)}</span>
+                  </td>
+                  <td className="py-2 px-3 text-center hidden sm:table-cell">
+                    {healthResult ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: gradeColors[healthResult.grade] || 'var(--text-muted)' }}>
+                        {healthResult.grade}
+                        <span className="text-[10px] font-normal text-[var(--text-muted)]">{Math.round(healthResult.score)}</span>
+                      </span>
+                    ) : <span className="text-[10px] text-[var(--text-muted)]">&mdash;</span>}
+                  </td>
+                  <td className="py-2 px-3 text-left hidden md:table-cell">
+                    {location ? (
+                      <span className="text-[11px] text-[var(--text-secondary)] truncate max-w-[120px] block">{formatLocation(location)}</span>
+                    ) : <span className="text-[10px] text-[var(--text-muted)]">&mdash;</span>}
                   </td>
                   <td className="py-2 px-4 text-right hidden sm:table-cell">
                     <div className="flex items-center justify-end gap-2">
@@ -2877,7 +2976,8 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
   const [enhancedTxMap, setEnhancedTxMap] = useState<Map<string, EnhancedTransaction>>(new Map());
   const enhancedFetchedSlotRef = useRef<number | null>(null);
   const [selectedTx, setSelectedTx] = useState<number | null>(null);
-  const [selectedFeeBucket, setSelectedFeeBucket] = useState<number | null>(null);
+  const [selectedFeeBuckets, setSelectedFeeBuckets] = useState<Set<number>>(new Set());
+  const wasPausedBeforeFeeBucketRef = useRef(false);
 
   // Use paused blocks when paused, otherwise live blocks
   const displayBlocks = isPaused ? pausedBlocks : blocks;
@@ -2888,6 +2988,24 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
       setPausedBlocks([...blocks]);
     }
     setIsPaused(!isPaused);
+  };
+
+  const handleFeeBucketSelect = (i: number, ctrlKey: boolean) => {
+    setSelectedFeeBuckets(prev => {
+      const next = new Set(prev);
+      if (ctrlKey) {
+        if (next.has(i)) next.delete(i); else next.add(i);
+      } else {
+        if (prev.size === 1 && prev.has(i)) { next.clear(); } else { next.clear(); next.add(i); }
+      }
+      if (next.size > 0 && prev.size === 0) {
+        wasPausedBeforeFeeBucketRef.current = isPaused;
+        if (!isPaused) { setPausedBlocks([...blocks]); setIsPaused(true); }
+      } else if (next.size === 0 && prev.size > 0) {
+        if (!wasPausedBeforeFeeBucketRef.current) { setIsPaused(false); }
+      }
+      return next;
+    });
   };
 
   // Search for a specific slot
@@ -3241,7 +3359,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             return (
               <button
                 key={block.slot}
-                onClick={() => { setSelectedSlot(block.slot); setSelectedTx(null); setSelectedFeeBucket(null); }}
+                onClick={() => { setSelectedSlot(block.slot); setSelectedTx(null); setSelectedFeeBuckets(new Set()); }}
                 className={`relative group transition-all duration-200 ${
                   isSelected ? 'z-10' : ''
                 }`}
@@ -3691,6 +3809,16 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
 
                 const isSelected = selectedTx === i;
 
+                const inFeeBucket = selectedFeeBuckets.size > 0 && feeByPosition && !showVotes
+                  ? (() => {
+                      for (const bi of selectedFeeBuckets) {
+                        const bucket = feeByPosition.buckets[bi];
+                        if (bucket && i >= bucket.start - 1 && i < bucket.end) return true;
+                      }
+                      return false;
+                    })()
+                  : null;
+
                 return (
                   <div
                     key={tx.signature}
@@ -3700,8 +3828,8 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                     style={{
                       height: `${Math.max(2, heightPercent)}%`,
                       backgroundColor: color,
-                      opacity: isSelected ? 1 : isHovered ? 1 : efficiencyOpacity,
-                      filter: isHovered ? 'brightness(1.3) drop-shadow(0 0 3px currentColor)' : undefined,
+                      opacity: isSelected ? 1 : isHovered ? 1 : inFeeBucket === false ? 0.12 : inFeeBucket === true ? 1 : efficiencyOpacity,
+                      filter: isHovered ? 'brightness(1.3) drop-shadow(0 0 3px currentColor)' : inFeeBucket === true ? 'brightness(1.15)' : undefined,
                       transformOrigin: 'bottom center',
                       borderRadius: txsForChart.length < 100 ? '4px 4px 0 0' : txsForChart.length < 500 ? '2px 2px 0 0' : '1px 1px 0 0',
                       minWidth: '1px',
@@ -4078,29 +4206,29 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             <div className="flex items-center gap-3 text-[9px] text-[var(--text-muted)]">
               <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent)]" /> Priority</span>
               <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[var(--accent-tertiary)]" /> Jito</span>
-              {selectedFeeBucket !== null && (
-                <button onClick={() => setSelectedFeeBucket(null)} className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors">&times; clear</button>
+              {selectedFeeBuckets.size > 0 && (
+                <button onClick={() => { setSelectedFeeBuckets(new Set()); if (!wasPausedBeforeFeeBucketRef.current) setIsPaused(false); }} className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors">&times; clear</button>
               )}
             </div>
           </div>
-          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Transactions ordered by position in block. Early = higher priority fees. Click any bar to see a summary of that section.</div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Click a bar for details, Ctrl+click to select multiple.</div>
 
-          <div className="flex items-end gap-[2px]" style={{ height: '120px' }}>
+          <div className="flex items-end gap-[2px]" style={{ height: selectedFeeBuckets.size > 0 ? '64px' : '120px', transition: 'height 0.2s ease' }}>
             {feeByPosition.buckets.map((bucket, i) => {
               const total = bucket.avgPriority + bucket.avgJito;
               const heightPct = feeByPosition.maxVal > 0 ? (total / feeByPosition.maxVal) * 100 : 0;
               const priorityPct = total > 0 ? (bucket.avgPriority / total) * 100 : 100;
-              const isSelected = selectedFeeBucket === i;
+              const isSelected = selectedFeeBuckets.has(i);
               return (
                 <div
                   key={i}
                   className="flex-1 group relative cursor-pointer transition-all duration-150"
                   style={{ height: '100%' }}
-                  onClick={() => setSelectedFeeBucket(isSelected ? null : i)}
+                  onClick={(e) => handleFeeBucketSelect(i, e.ctrlKey || e.metaKey)}
                 >
                   <div className="absolute bottom-0 left-0 right-0 flex flex-col rounded-t overflow-hidden transition-opacity duration-150" style={{
                     height: `${Math.max(heightPct, 2)}%`,
-                    opacity: selectedFeeBucket !== null && !isSelected ? 0.3 : 1,
+                    opacity: selectedFeeBuckets.size > 0 && !isSelected ? 0.3 : 1,
                     outline: isSelected ? '1.5px solid var(--accent)' : 'none',
                     outlineOffset: '-1px',
                   }}>
@@ -4109,8 +4237,8 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                     )}
                     <div className="bg-[var(--accent)] flex-1" />
                   </div>
-                  {/* Hover tooltip (only when not selected) */}
-                  {selectedFeeBucket === null && (
+                  {/* Hover tooltip (only when nothing selected) */}
+                  {selectedFeeBuckets.size === 0 && (
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 pointer-events-none">
                       <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded px-2 py-1.5 shadow-xl text-[9px] whitespace-nowrap">
                         <div className="font-medium text-[var(--text-primary)] mb-0.5">Txs {bucket.start}–{bucket.end}</div>
@@ -4130,31 +4258,50 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
             <span>Late in block <span className="text-[var(--text-tertiary)]">(lower priority)</span></span>
           </div>
 
-          {/* Selected bucket summary */}
-          {selectedFeeBucket !== null && (() => {
-            const bucket = feeByPosition.buckets[selectedFeeBucket];
-            if (!bucket) return null;
-            const successRate = bucket.count > 0 ? (bucket.successCount / bucket.count) * 100 : 0;
-            const avgCU = bucket.count > 0 ? bucket.totalCU / bucket.count : 0;
+          {/* Selected bucket(s) summary */}
+          {selectedFeeBuckets.size > 0 && (() => {
+            const selectedIndices = Array.from(selectedFeeBuckets);
+            const selectedBuckets = selectedIndices.map(idx => feeByPosition.buckets[idx]).filter(Boolean);
+            if (selectedBuckets.length === 0) return null;
+            const totalCount = selectedBuckets.reduce((s, b) => s + b.count, 0);
+            const totalFees = selectedBuckets.reduce((s, b) => s + b.totalFees, 0);
+            const totalCU = selectedBuckets.reduce((s, b) => s + b.totalCU, 0);
+            const totalSuccess = selectedBuckets.reduce((s, b) => s + b.successCount, 0);
+            const totalFail = selectedBuckets.reduce((s, b) => s + b.failCount, 0);
+            const weightedPriority = totalCount > 0 ? selectedBuckets.reduce((s, b) => s + b.avgPriority * b.count, 0) / totalCount : 0;
+            const weightedJito = totalCount > 0 ? selectedBuckets.reduce((s, b) => s + b.avgJito * b.count, 0) / totalCount : 0;
+            const successRate = totalCount > 0 ? (totalSuccess / totalCount) * 100 : 0;
+            const avgCU = totalCount > 0 ? totalCU / totalCount : 0;
+            // Merge programs across selected buckets
+            const progMap = new Map<string, number>();
+            for (const b of selectedBuckets) {
+              for (const p of b.topPrograms) {
+                progMap.set(p.prog, (progMap.get(p.prog) || 0) + p.count);
+              }
+            }
+            const mergedPrograms = Array.from(progMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
+            const label = selectedBuckets.length === 1
+              ? `Txs ${selectedBuckets[0].start}–${selectedBuckets[0].end}`
+              : `${selectedBuckets.length} sections`;
             return (
               <div className="mt-3 pt-3 border-t border-[var(--border-primary)] animate-section">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Section Summary</span>
-                  <span className="text-[10px] font-mono text-[var(--text-secondary)]">Txs {bucket.start}–{bucket.end}</span>
-                  <span className="text-[9px] text-[var(--text-tertiary)]">({bucket.count} transactions)</span>
+                  <span className="text-[10px] font-mono text-[var(--text-secondary)]">{label}</span>
+                  <span className="text-[9px] text-[var(--text-tertiary)]">({totalCount} transactions)</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
                   <div>
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg Priority</div>
-                    <div className="font-mono text-sm text-[var(--accent)]">{formatNumber(Math.round(bucket.avgPriority))} <span className="text-[10px] text-[var(--text-muted)]">L</span></div>
+                    <div className="font-mono text-sm text-[var(--accent)]">{formatNumber(Math.round(weightedPriority))} <span className="text-[10px] text-[var(--text-muted)]">L</span></div>
                   </div>
                   <div>
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg Jito Tip</div>
-                    <div className="font-mono text-sm text-[var(--accent-tertiary)]">{bucket.avgJito > 0 ? formatNumber(Math.round(bucket.avgJito)) : '—'} <span className="text-[10px] text-[var(--text-muted)]">{bucket.avgJito > 0 ? 'L' : ''}</span></div>
+                    <div className="font-mono text-sm text-[var(--accent-tertiary)]">{weightedJito > 0 ? formatNumber(Math.round(weightedJito)) : '—'} <span className="text-[10px] text-[var(--text-muted)]">{weightedJito > 0 ? 'L' : ''}</span></div>
                   </div>
                   <div>
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Total Fees</div>
-                    <div className="font-mono text-sm text-[var(--text-secondary)]">{(bucket.totalFees / 1e9).toFixed(6)} <span className="text-[10px] text-[var(--text-muted)]">SOL</span></div>
+                    <div className="font-mono text-sm text-[var(--text-secondary)]">{(totalFees / 1e9).toFixed(6)} <span className="text-[10px] text-[var(--text-muted)]">SOL</span></div>
                   </div>
                   <div>
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Avg CU</div>
@@ -4164,15 +4311,15 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-0.5">Success Rate</div>
                     <div className="font-mono text-sm" style={{ color: successRate >= 90 ? 'var(--success)' : successRate >= 70 ? 'var(--warning)' : 'var(--error)' }}>
                       {successRate.toFixed(1)}%
-                      {bucket.failCount > 0 && <span className="text-[10px] text-[var(--text-muted)]"> ({bucket.failCount} failed)</span>}
+                      {totalFail > 0 && <span className="text-[10px] text-[var(--text-muted)]"> ({totalFail} failed)</span>}
                     </div>
                   </div>
                 </div>
-                {bucket.topPrograms.length > 0 && (
+                {mergedPrograms.length > 0 && (
                   <div>
                     <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1.5">Top Programs in Section</div>
                     <div className="flex flex-wrap gap-1.5">
-                      {bucket.topPrograms.map(({ prog, count }) => {
+                      {mergedPrograms.map(([prog, count]) => {
                         const info = getProgramInfo(prog);
                         return (
                           <span key={prog} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[var(--bg-tertiary)]">
