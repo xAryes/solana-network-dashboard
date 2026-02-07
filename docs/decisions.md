@@ -167,6 +167,11 @@
 **Decision**: EpochSlotDistribution computes historical average slots per epoch from Solana Compass networkHistory data and shows delta percentage vs current epoch allocation.
 **Rationale**: Directly fulfills user request. Shows whether current epoch has more or fewer slots than historical average — useful for understanding validator reward dynamics.
 
+## 2026-02-07: Solana Ambient Background
+**Context**: User wanted background visual identity enhancements with subtle animated patterns in Solana brand colors. Cards appeared blurry/soft against the pure black background.
+**Decision**: Add fixed ambient background with 3 radial gradient orbs (purple #9945FF, green #14F195, blue #00C2FF at 4-5.5% opacity) with slow 40s drift animation. Bump --bg-card from #0a0a0a to #0d0d0d. Add subtle box-shadow + inset highlight to .card for depth and crisp edges.
+**Rationale**: Solana brand colors create visual identity without distraction. Higher card contrast + shadow gives cards more definition. Z-index layering (ambient z-0, content z-10, header z-30) ensures proper rendering.
+
 ## 2026-02-07: IndexedDB Version Bump (1→2)
 **Context**: New `heatmap_stats` object store needed for NetworkHeatmap feature.
 **Decision**: Bumped DB_VERSION from 1 to 2. Added `heatmap_stats` store with `slot` keyPath and `blockTime` index in the `onupgradeneeded` handler.

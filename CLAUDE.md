@@ -7,7 +7,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 ## Current State
 
 - **Branch**: main
-- **Status**: UNCOMMITTED CHANGES (~925 insertions). Last commit: `adadd3e`. Working tree has: SidebarNav, NetworkHeatmap, per-leader performance tracking, epoch slot avg comparison. Backend proxy ready (`server/`), not yet deployed.
+- **Status**: All committed. Latest: `b375f4c`. SidebarNav, Solana ambient background, card sharpness fix. Backend proxy ready (`server/`), not yet deployed.
 - **Last updated**: 2026-02-07
 - **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
@@ -90,6 +90,13 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] Per-leader performance tracking: session-accumulated blocks/CU/txs/failed refs in App(), exposed as validatorPerformance
 - [x] Epoch slot avg comparison: historical avg slots per epoch vs current allocation (in EpochSlotDistribution)
 - [x] IndexedDB version bump (1→2) for heatmap_stats object store
+- [x] SidebarNav breakpoint lowered to xl (1280px+), scroll-spy trigger-line algorithm with rAF
+- [x] Geography: removed flags, unified continent/country bar colors to --accent
+- [x] EpochSlotDistribution simplified (removed session stats + historical avg)
+- [x] Validator search repositioned to full-width row above pagination
+- [x] NetworkHeatmap + per-leader perf removed from UI (hooks preserved for future)
+- [x] Solana ambient background (animated gradient orbs in brand colors)
+- [x] Card sharpness: --bg-card #0a→#0d, box-shadow + inset highlight
 - [ ] Deploy backend proxy (Render/Cloudflare/Railway) ← NEXT
 - [ ] Set `VITE_API_URL` on Vercel to deployed backend URL
 - [ ] Rotate Helius + Alchemy API keys (old keys in git history)
@@ -250,6 +257,7 @@ SidebarNav: Fixed left sidebar (2xl+ only) with scroll-spy section dots per rout
 - `CU_CATEGORIES` constant for compute unit categorization
 - `CATEGORY_COLORS` for transaction type color coding
 - Frosted glass header: `backdrop-blur-xl` + `saturate(180%)`
+- Solana ambient background: `.sol-ambient` fixed div with 3 radial gradient orbs (purple/green/blue at 4-5.5% opacity), 40s drift animation. Z-index layering: ambient z-0, content z-10, sidebar z-20, header z-30
 
 ## Removed Components (don't recreate)
 - `LiveTransactionStream` — low value, just scrolling signature hashes

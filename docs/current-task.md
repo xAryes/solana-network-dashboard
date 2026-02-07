@@ -1,7 +1,7 @@
-# Current State — sol.watch v2+
+# Current State — sol.watch v3-ux
 
 ## Status
-Last commit: `adadd3e` on main. **UNCOMMITTED CHANGES** (~925 insertions, 7 files modified).
+Last commit: `b375f4c` on main. All committed and pushed.
 
 ## Uncommitted Changes (v3-ux features)
 
@@ -61,11 +61,14 @@ Last commit: `adadd3e` on main. **UNCOMMITTED CHANGES** (~925 insertions, 7 file
 2. **RPC connection failure**: User reported "rpc fail - connection failed" — needs investigation
 
 ## Remaining Tasks
-- [x] RPC connection failure — was caused by backend proxy not running (fixed: use `bun src/index.ts` not `bun run dev`)
-- [ ] Commit uncommitted changes (SidebarNav, Heatmap, leader perf, epoch slot comparison)
+- [x] RPC connection failure — fixed: use `bun src/index.ts` not `bun run dev`
+- [x] Commit SidebarNav, Heatmap, leader perf, epoch slot comparison
+- [x] Solana ambient background + card sharpness fix
 - [ ] Deploy backend proxy (Render/Railway)
 - [ ] Set VITE_API_URL on Vercel to deployed backend URL
 - [ ] Rotate API keys (old keys in git history)
+- [ ] Re-enable Enhanced TX API for Block Deep Dive (TX type/source breakdown)
+- [ ] Add program-specific priority fee estimates (Helius `accountKeys` param)
 - [ ] Block queue: test showing 8 blocks (experimental)
 - [ ] UI/UX polish — ongoing
 - [ ] Mobile experience (BlockDeepDive heavy on small screens)
