@@ -357,24 +357,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-primary)]" data-theme={theme}>
-      {/* Solana ambient background — hidden in classic mode via CSS */}
-      <div className="sol-ambient" aria-hidden="true">
-        <div className="sol-orb sol-orb-1" />
-        <div className="sol-orb sol-orb-2" />
-        <div className="sol-orb sol-orb-3" />
-        <div className="sol-orb sol-orb-4" />
-        <div className="sol-waves">
-          <div className="sol-wave-line" />
-          <div className="sol-wave-line" />
-          <div className="sol-wave-line" />
-          <div className="sol-wave-line" />
-          <div className="sol-wave-line" />
-        </div>
-        <div className="sol-noise" />
-        <div className="sol-grid" />
-        <div className="sol-vignette" />
-      </div>
-
       {/* Header */}
       <header className="border-b px-4 sm:px-6 py-3 sm:py-4 sticky top-0 backdrop-blur-xl z-30" style={{ backgroundColor: 'var(--header-bg)', borderColor: 'var(--header-border)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 relative">
@@ -485,7 +467,7 @@ function App() {
       <SidebarNav />
 
       {/* Main Content - Routed Pages */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0 relative z-10">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0">
         <div key={location.pathname} className="page-transition">
           <Routes location={location}>
             <Route path="/" element={
@@ -533,7 +515,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0 relative z-10">
+      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0">
         <div className="max-w-7xl mx-auto">
           {/* Category Legend - only show on Explorer page */}
           {location.pathname === '/explorer' && (
@@ -1848,7 +1830,7 @@ function AnalyticsSection({
                       ? 'linear-gradient(90deg, var(--warning), var(--error))'
                       : 'linear-gradient(90deg, var(--success), var(--accent-secondary))',
                   }} />
-                  <div className="absolute top-0 bottom-0 w-px bg-white/40" style={{ left: `${Math.min(blockEfficiency.maxCU, 100)}%` }} title={`Peak: ${blockEfficiency.maxCU.toFixed(1)}%`} />
+                  <div className="absolute top-0 bottom-0 w-px bg-[var(--text-primary)]/40" style={{ left: `${Math.min(blockEfficiency.maxCU, 100)}%` }} title={`Peak: ${blockEfficiency.maxCU.toFixed(1)}%`} />
                 </div>
               </div>
 
@@ -4788,7 +4770,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                 ].filter(g => g.count > 0).map(g => (
                   <span
                     key={g.grade}
-                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'health' && barFilter.key === g.grade ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'health' && barFilter.key === g.grade ? 'ring-1 ring-[var(--text-primary)]/40 rounded px-1 -mx-1' : ''}`}
                     onClick={() => { setBarFilter(f => f?.cat === 'health' && f.key === g.grade ? null : { cat: 'health', key: g.grade }); setPage(0); }}
                   >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: g.color }} />
@@ -4823,7 +4805,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                 ].filter(s => s.count > 0).map(s => (
                   <span
                     key={s.label}
-                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'skip' && barFilter.key === s.label ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'skip' && barFilter.key === s.label ? 'ring-1 ring-[var(--text-primary)]/40 rounded px-1 -mx-1' : ''}`}
                     onClick={() => { setBarFilter(f => f?.cat === 'skip' && f.key === s.label ? null : { cat: 'skip', key: s.label }); setPage(0); }}
                   >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: s.color }} />
@@ -4858,7 +4840,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                 ].filter(s => s.count > 0).map(s => (
                   <span
                     key={s.label}
-                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'commission' && barFilter.key === s.label ? 'ring-1 ring-white/40 rounded px-1 -mx-1' : ''}`}
+                    className={`flex items-center gap-1 text-[9px] cursor-pointer hover:opacity-80 transition-opacity ${barFilter?.cat === 'commission' && barFilter.key === s.label ? 'ring-1 ring-[var(--text-primary)]/40 rounded px-1 -mx-1' : ''}`}
                     onClick={() => { setBarFilter(f => f?.cat === 'commission' && f.key === s.label ? null : { cat: 'commission', key: s.label }); setPage(0); }}
                   >
                     <span className="w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: s.color }} />

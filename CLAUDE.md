@@ -7,7 +7,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 ## Current State
 
 - **Branch**: main
-- **Status**: UNCOMMITTED CHANGES (~925 insertions). Last commit: `adadd3e`. Working tree has: SidebarNav, NetworkHeatmap, per-leader performance tracking, epoch slot avg comparison. Backend proxy ready (`server/`), not yet deployed.
+- **Status**: All committed. Latest features: SidebarNav, dark/light theme toggle, per-leader performance tracking. Backend proxy ready (`server/`), not yet deployed.
 - **Last updated**: 2026-02-07
 - **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
@@ -90,6 +90,10 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] Per-leader performance tracking: session-accumulated blocks/CU/txs/failed refs in App(), exposed as validatorPerformance
 - [x] Epoch slot avg comparison: historical avg slots per epoch vs current allocation (in EpochSlotDistribution)
 - [x] IndexedDB version bump (1→2) for heatmap_stats object store
+- [x] Dark/light theme toggle: CSS vars + `data-theme` attribute, localStorage persistence, sun/moon toggle in header
+- [x] Light mode readability audit: sidebar, filter rings, CU peak line, program row hover all adapted
+- [x] Ambient background removed (archived in decisions.md): user preferred clean solid backgrounds
+- [x] Header nav centered via absolute positioning, TPS badge compact pill style
 - [ ] Deploy backend proxy (Render/Cloudflare/Railway) ← NEXT
 - [ ] Set `VITE_API_URL` on Vercel to deployed backend URL
 - [ ] Rotate Helius + Alchemy API keys (old keys in git history)
@@ -97,7 +101,6 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [ ] UI/UX polish — design isn't final, needs visual improvements
 - [ ] Improve mobile experience (BlockDeepDive is heavy on small screens)
 - [ ] Add loading timeout / "no data" states for sections that stay empty
-- [ ] Commit uncommitted changes (SidebarNav, Heatmap, leader perf, epoch slot comparison)
 
 ## Key Decisions
 
@@ -114,7 +117,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - **Module-level helpers**: `formatSOL`, `formatCompact`, `getTrend`, `TrendBadge` extracted from component to module level for reuse across split components.
 - **No 24h comparison**: User preferred session-only failure data. Removed historicalProgramFailures dependency.
 - **Minimal TX detail panel**: Removed signature, programs, balance changes, instructions, logs from selected TX. Keep only header + efficiency score + fee/compute breakdown + Solscan link.
-- **Tooltip backgrounds**: Use `bg-black/95` instead of `bg-[var(--bg-primary)]/95` — black gives better contrast with backdrop-blur
+- **Tooltip backgrounds**: Use `bg-[var(--bg-tooltip)]` — CSS var adapts per theme (dark: black/95, light: white/95)
 - **Epoch links → Solscan**: Changed from `solanacompass.com/epochs/{epoch}` to `solscan.io/epoch/{epoch}` — Solscan has richer epoch detail pages
 - **Analytics card layout**: Hero metric (large font) + context line + progress bars + stacked distribution bars. Replaces old grid-of-small-numbers layout.
 - **Context descriptions everywhere**: Every section/card has a descriptive subtitle explaining what the data means. Onboarding-friendly.
@@ -132,6 +135,9 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - **NetworkHeatmap with IndexedDB**: CU fill and failure rate heatmap by hour of day. Data persisted in IndexedDB `heatmap_stats` store with 7-day rolling cleanup. Backfills from recent blocks on mount.
 - **Per-leader performance in App refs**: Session-accumulated leader stats (blocks, CU, txs, failed) tracked via 4 refs in App(), exposed as `validatorPerformance` Map via useMemo. Used in EpochSlotDistribution and ValidatorsPage.
 - **Epoch slot avg comparison**: EpochSlotDistribution computes historical avg slots per epoch from networkHistory, compares with current epoch allocation. Shows delta percentage.
+- **Dark/light theme via CSS vars**: `data-theme` attribute on root div, all colors via CSS custom properties. Light overrides in `[data-theme="light"]`. Toggle persisted in localStorage (`sol-theme`). Theme-aware: sidebar, tooltips, scrollbars, skeleton loaders, card shadows.
+- **No ambient background**: Tried floating gradient orbs, glass morphism, data streams — user preferred clean solid backgrounds. Code archived in decisions.md.
+- **Header nav absolute centering**: `absolute left-1/2 -translate-x-1/2` for true center regardless of left/right content width.
 
 ## Project Structure
 
@@ -250,6 +256,7 @@ SidebarNav: Fixed left sidebar (2xl+ only) with scroll-spy section dots per rout
 - `CU_CATEGORIES` constant for compute unit categorization
 - `CATEGORY_COLORS` for transaction type color coding
 - Frosted glass header: `backdrop-blur-xl` + `saturate(180%)`
+- **Theming**: `data-theme` attribute on root div. Dark = default. Light = `[data-theme="light"]` CSS overrides. All UI colors via CSS vars. Header/nav/tooltip backgrounds via `--header-bg`, `--nav-bg`, `--bg-tooltip`. Toggle button in header with sun/moon SVG icons. Theme persisted in localStorage `sol-theme`.
 
 ## Removed Components (don't recreate)
 - `LiveTransactionStream` — low value, just scrolling signature hashes
@@ -269,6 +276,7 @@ SidebarNav: Fixed left sidebar (2xl+ only) with scroll-spy section dots per rout
 - "Failure Composition by category per block group" stacked chart — removed, too granular
 - `blockComposition` tracking in analysis useMemo — removed with composition chart
 - `selectedEpochIdx` state + `epochCorrelation` useMemo — removed with epoch selector
+- Ambient background (floating gradient orbs, glass morphism cards, data streams, noise grain, dot grid, vignette) — user preferred clean solid backgrounds. Archived in `docs/decisions.md`.
 
 ## Build & Deploy
 

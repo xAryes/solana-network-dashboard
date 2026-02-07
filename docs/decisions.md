@@ -167,6 +167,22 @@
 **Decision**: EpochSlotDistribution computes historical average slots per epoch from Solana Compass networkHistory data and shows delta percentage vs current epoch allocation.
 **Rationale**: Directly fulfills user request. Shows whether current epoch has more or fewer slots than historical average — useful for understanding validator reward dynamics.
 
+## 2026-02-07: Dark/Light Theme Toggle
+**Context**: Dashboard was dark-only. User wanted a light mode option.
+**Decision**: Add `data-theme` attribute on root div with `dark`/`light` values. All colors via CSS custom properties. Toggle button (sun/moon icons) in header. Theme persisted in localStorage (`sol-theme` key).
+**Rationale**: Full theme support via CSS vars means every element adapts automatically. No external library needed.
+
+## 2026-02-07: Ambient Background Removed (archived for reference)
+**Context**: Iterated through several background designs: subtle gradient orbs → individually animated floating orbs (4 orbs with independent float paths, 60-100px blur, parallax depth) → glass morphism cards (semi-transparent rgba + backdrop-blur) → data stream streaks → noise grain + dot grid + vignette. User ultimately preferred clean solid backgrounds.
+**Decision**: Remove all ambient background code. Keep clean dark/light toggle only.
+**Rationale**: User explicitly said "no solana weird background." Solid backgrounds are cleaner and more professional. The ambient code was ~200 lines of CSS (keyframes for orbFloat1-4, data-stream, noiseShift, orb elements, wave lines, noise SVG, dot grid, vignette) plus JSX in App.tsx (sol-ambient div with 4 orb elements + 5 wave line elements). All removed.
+**Archive**: If ever re-enabled, the approach was: 4 gradient orbs (purple 800px, green 700px, blue 500px, magenta 350px) with independent `orbFloat1-4` keyframe animations (25-40s), varying blur depths for parallax, absolute positioned in a fixed container behind content (z-0), content at z-10. Glass morphism cards used `rgba(13,13,13,0.6)` + `backdrop-filter: blur(16px)` + `saturate(130%)`.
+
+## 2026-02-07: Light Mode Readability Audit
+**Context**: After adding light theme, needed to verify all UI elements are readable on white backgrounds.
+**Decision**: Audit and fix: (1) Sidebar nav — light background override, (2) sidebar item hover — dark overlay instead of white, (3) program row hover — dark inset shadow, (4) CU peak indicator — `var(--text-primary)` instead of white, (5) filter ring highlights — `var(--text-primary)` instead of white. Tooltip text/bg already used CSS vars.
+**Rationale**: Hardcoded `white/40` and `rgba(255,255,255,0.04)` are invisible on white backgrounds.
+
 ## 2026-02-07: IndexedDB Version Bump (1→2)
 **Context**: New `heatmap_stats` object store needed for NetworkHeatmap feature.
 **Decision**: Bumped DB_VERSION from 1 to 2. Added `heatmap_stats` store with `slot` keyPath and `blockTime` index in the `onupgradeneeded` handler.
