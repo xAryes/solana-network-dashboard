@@ -4311,9 +4311,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
     return { total, grades, avgScore, skipBuckets, commBuckets, top10Stake, top33Stake, totalStake };
   }, [validatorInfo, production, currentSlot]);
 
-  if (!validatorInfo) return null;
-
-  const { validators, totalStake, avgCommission } = validatorInfo;
+  const { validators, totalStake, avgCommission } = validatorInfo || { validators: [], totalStake: 0, avgCommission: 0 };
   const delinquentCount = validators.filter(v => v.delinquent).length;
 
   const filteredValidators = useMemo(() => {
@@ -4357,6 +4355,8 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
 
     return result;
   }, [validators, searchQuery, getValidatorName, getValidatorMetadata, barFilter, production, currentSlot]);
+
+  if (!validatorInfo) return null;
 
   const totalPages = Math.ceil(filteredValidators.length / PAGE_SIZE);
   const safePageNum = Math.min(page, Math.max(0, totalPages - 1));
