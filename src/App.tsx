@@ -58,19 +58,12 @@ const COUNTRY_FLAGS: Record<string, string> = {
 };
 
 function formatLocation(location?: string): string {
-  if (!location) return '🌐';
-  // Try to extract country and add flag
-  for (const [code, flag] of Object.entries(COUNTRY_FLAGS)) {
-    if (location.includes(code) || location.toLowerCase().includes(code.toLowerCase())) {
-      // Extract city if available
-      const parts = location.split(',');
-      if (parts.length > 1) {
-        return `${flag} ${parts[0].trim()}`;
-      }
-      return flag;
-    }
+  if (!location) return '';
+  const parts = location.split(',').map(p => p.trim());
+  if (parts.length > 1) {
+    return `${parts[0]}, ${parts[parts.length - 1]}`;
   }
-  return `🌐 ${location.split(',')[0] || ''}`.trim();
+  return parts[0];
 }
 
 // Page definitions for routing
@@ -1943,8 +1936,6 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
     return `${(seconds / 3600).toFixed(1)}h`;
   };
 
-  const gradeColors: Record<string, string> = { A: 'var(--success)', B: 'var(--accent-tertiary)', C: 'var(--accent-secondary)', D: 'var(--warning)', F: 'var(--error)' };
-
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
@@ -1998,10 +1989,20 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
                   </td>
                   <td className="py-2 px-3 text-center hidden sm:table-cell">
                     {healthResult ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: gradeColors[healthResult.grade] || 'var(--text-muted)' }}>
-                        {healthResult.grade}
-                        <span className="text-[10px] font-normal text-[var(--text-muted)]">{Math.round(healthResult.score)}</span>
-                      </span>
+                      <div className="relative inline-flex group">
+                        <HealthGauge score={healthResult.score} grade={healthResult.grade} size={28} />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-40 pointer-events-none">
+                          <div className="bg-black/95 backdrop-blur border border-[var(--border-secondary)] rounded-lg px-3 py-2 shadow-xl text-[9px] whitespace-nowrap">
+                            <div className="font-medium text-[var(--text-primary)] mb-1">Health Score: <span style={{ color: GRADE_COLORS[healthResult.grade] }}>{healthResult.score} ({healthResult.grade})</span></div>
+                            <div className="space-y-0.5 text-[var(--text-muted)]">
+                              <div>Skip rate (40%): <span className="font-mono" style={{ color: healthResult.skipScore >= 80 ? 'var(--success)' : healthResult.skipScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{healthResult.skipScore}</span></div>
+                              <div>Commission (20%): <span className="font-mono" style={{ color: healthResult.commissionScore >= 80 ? 'var(--success)' : healthResult.commissionScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{healthResult.commissionScore}</span></div>
+                              <div>Liveness (20%): <span className="font-mono" style={{ color: healthResult.livenessScore >= 80 ? 'var(--success)' : 'var(--error)' }}>{healthResult.livenessScore}</span></div>
+                              <div>Vote recency (20%): <span className="font-mono" style={{ color: healthResult.voteScore >= 80 ? 'var(--success)' : healthResult.voteScore >= 50 ? 'var(--warning)' : 'var(--error)' }}>{healthResult.voteScore}</span></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     ) : <span className="text-[10px] text-[var(--text-muted)]">&mdash;</span>}
                   </td>
                   <td className="py-2 px-3 text-left hidden md:table-cell">
@@ -2062,6 +2063,16 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
   const uniqueValidators = sorted.length;
   const top10Pct = sorted.slice(0, 10).reduce((s, v) => s + v.pct, 0);
   const top33Pct = sorted.slice(0, Math.ceil(sorted.length / 3)).reduce((s, v) => s + v.pct, 0);
+  const avgSlots = uniqueValidators > 0 ? Math.round(totalEpochSlots / uniqueValidators) : 0;
+
+  // Nakamoto coefficient: minimum validators controlling >33% of slots
+  let nakamoto = 0;
+  let cumulativePctCalc = 0;
+  for (const v of sorted) {
+    nakamoto++;
+    cumulativePctCalc += v.pct;
+    if (cumulativePctCalc > 33.33) break;
+  }
 
   return (
     <section className="mb-8 sm:mb-10">
@@ -2089,6 +2100,14 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
           <div>
             <div className="text-lg font-bold text-[var(--text-primary)]">{sorted[0]?.slots.toLocaleString() || '—'}</div>
             <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Max (#{sorted[0]?.name.slice(0, 12) || '?'})</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--text-primary)]">{avgSlots.toLocaleString()}</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Avg Slots</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[var(--accent-tertiary)]">{nakamoto}</div>
+            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Nakamoto Coeff.</div>
           </div>
         </div>
       </div>
@@ -4211,7 +4230,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
               )}
             </div>
           </div>
-          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Click a bar for details, Ctrl+click to select multiple.</div>
+          <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Click a bar for details, Shift+click to select multiple.</div>
 
           <div className="flex items-end gap-[2px]" style={{ height: selectedFeeBuckets.size > 0 ? '64px' : '120px', transition: 'height 0.2s ease' }}>
             {feeByPosition.buckets.map((bucket, i) => {
@@ -4224,7 +4243,7 @@ function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getVa
                   key={i}
                   className="flex-1 group relative cursor-pointer transition-all duration-150"
                   style={{ height: '100%' }}
-                  onClick={(e) => handleFeeBucketSelect(i, e.ctrlKey || e.metaKey)}
+                  onClick={(e) => handleFeeBucketSelect(i, e.shiftKey)}
                 >
                   <div className="absolute bottom-0 left-0 right-0 flex flex-col rounded-t overflow-hidden transition-opacity duration-150" style={{
                     height: `${Math.max(heightPct, 2)}%`,
@@ -4511,6 +4530,16 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
   const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredValidators.length);
   const pageValidators = filteredValidators.slice(pageStart, pageEnd);
 
+  // Nakamoto coefficient by stake: minimum validators controlling >33.33% of total stake
+  const nakamotoStake = useMemo(() => {
+    let cumStake = 0;
+    for (let i = 0; i < validators.length; i++) {
+      cumStake += validators[i].activatedStake;
+      if ((cumStake / totalStake) * 100 > 33.33) return i + 1;
+    }
+    return validators.length;
+  }, [validators, totalStake]);
+
   // Stacked bar helper — interactive when onSegmentClick provided
   const StackedBar = ({ segments, height = 8, onSegmentClick, activeKey }: {
     segments: Array<{ value: number; color: string; label: string; key?: string }>;
@@ -4775,7 +4804,8 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
               return (
                 <Fragment key={v.votePubkey}>
                 <tr
-                  className={`border-b border-[var(--border-primary)] last:border-0 hover:bg-[var(--bg-hover)] ${isExpanded ? 'bg-[var(--bg-secondary)]/30' : ''}`}
+                  className={`border-b last:border-0 hover:bg-[var(--bg-hover)] ${isExpanded ? 'bg-[var(--bg-secondary)]/30' : ''} ${rank === nakamotoStake ? 'border-[var(--accent-tertiary)]/60' : 'border-[var(--border-primary)]'}`}
+                  style={rank === nakamotoStake ? { borderBottomWidth: '2px' } : undefined}
                 >
                   <td className="px-4 py-2.5 text-sm text-[var(--text-muted)]">{rank}</td>
                   <td className="px-4 py-2.5">
@@ -4798,10 +4828,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-center">
-                    <div
-                      className="relative inline-flex cursor-pointer group"
-                      onClick={(e) => { e.stopPropagation(); setExpandedValidator(isExpanded ? null : v.votePubkey); }}
-                    >
+                    <div className="relative inline-flex cursor-pointer group" onClick={(e) => { e.stopPropagation(); setExpandedValidator(isExpanded ? null : v.votePubkey); }}>
                       <HealthGauge score={h.score} grade={h.grade} size={32} />
                       {/* Hover tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-40 pointer-events-none">
@@ -4862,6 +4889,17 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                             </div>
                           </div>
                         ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {rank === nakamotoStake && (
+                  <tr key="nakamoto-line">
+                    <td colSpan={9} className="px-4 py-1 bg-[var(--accent-tertiary)]/5">
+                      <div className="flex items-center gap-2 text-[9px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-tertiary)]" />
+                        <span className="text-[var(--accent-tertiary)] font-medium">Nakamoto Coefficient = {nakamotoStake}</span>
+                        <span className="text-[var(--text-muted)]">— these top {nakamotoStake} validators control &gt;33% of total stake</span>
                       </div>
                     </td>
                   </tr>
@@ -5120,13 +5158,13 @@ function ValidatorGeography({ validatorLocations }: {
   const totalContinentCount = continents.reduce((s, [, c]) => s + c, 0);
 
   const continentColors: Record<string, string> = {
-    'North America': 'var(--accent)',
-    'Europe': 'var(--accent-secondary)',
-    'Asia': 'var(--accent-tertiary)',
-    'South America': 'var(--warning)',
-    'Oceania': 'var(--success)',
-    'Africa': '#f472b6',
-    'Other': 'var(--text-tertiary)',
+    'North America': '#8b5cf6',
+    'Europe': '#3b82f6',
+    'Asia': '#10b981',
+    'South America': '#f59e0b',
+    'Oceania': '#06b6d4',
+    'Africa': '#ec4899',
+    'Other': '#6b7280',
   };
 
   return (
@@ -5148,8 +5186,8 @@ function ValidatorGeography({ validatorLocations }: {
                 <div key={country} className="flex items-center gap-2 text-xs">
                   <span className="text-[10px] text-[var(--text-muted)] w-4 text-right">{idx + 1}</span>
                   <span className="w-20 flex-shrink-0 truncate text-[var(--text-secondary)]">{flag} {country}</span>
-                  <div className="flex-1 h-4 bg-[var(--bg-tertiary)] rounded overflow-hidden">
-                    <div className="h-full rounded bg-[var(--accent)]/60" style={{ width: `${(count / maxCountryCount) * 100}%` }} />
+                  <div className="flex-1 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-[var(--accent)] transition-all duration-500" style={{ width: `${(count / maxCountryCount) * 100}%`, opacity: 0.6 }} />
                   </div>
                   <span className="font-mono text-[var(--text-tertiary)] w-10 text-right">{count}</span>
                   <span className="font-mono text-[10px] text-[var(--text-muted)] w-10 text-right">{pct.toFixed(1)}%</span>
@@ -5165,38 +5203,18 @@ function ValidatorGeography({ validatorLocations }: {
             <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
             By Continent
           </div>
-          {/* Stacked bar */}
-          <div className="h-8 rounded-lg overflow-hidden flex mb-3">
+          <div className="space-y-2">
             {continents.map(([continent, count]) => {
               const pct = (count / totalContinentCount) * 100;
               return (
-                <div
-                  key={continent}
-                  className="h-full group relative cursor-default"
-                  style={{ width: `${pct}%`, background: continentColors[continent] || 'var(--text-tertiary)', opacity: 0.7 }}
-                  title={`${continent}: ${count} (${pct.toFixed(1)}%)`}
-                >
-                  {pct > 8 && (
-                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-                      {pct.toFixed(0)}%
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="space-y-1.5">
-            {continents.map(([continent, count]) => {
-              const pct = (count / totalContinentCount) * 100;
-              return (
-                <div key={continent} className="flex items-center gap-2 text-xs">
-                  <span className="w-2.5 h-2.5 rounded flex-shrink-0" style={{ background: continentColors[continent] || 'var(--text-tertiary)' }} />
+                <div key={continent} className="flex items-center gap-2.5 text-xs">
+                  <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: continentColors[continent] || '#6b7280' }} />
                   <span className="text-[var(--text-secondary)] w-28 flex-shrink-0">{continent}</span>
                   <div className="flex-1 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: continentColors[continent] || 'var(--text-tertiary)' }} />
+                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: continentColors[continent] || '#6b7280', opacity: 0.7 }} />
                   </div>
-                  <span className="font-mono text-[var(--text-tertiary)] w-10 text-right">{count}</span>
-                  <span className="font-mono text-[10px] text-[var(--text-muted)] w-10 text-right">{pct.toFixed(1)}%</span>
+                  <span className="font-mono text-[var(--text-tertiary)] w-8 text-right">{count}</span>
+                  <span className="font-mono text-[10px] text-[var(--text-muted)] w-12 text-right">{pct.toFixed(1)}%</span>
                 </div>
               );
             })}
