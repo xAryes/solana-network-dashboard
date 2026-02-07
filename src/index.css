@@ -469,6 +469,22 @@ section, main [id] {
   background: rgba(124, 58, 237, 0.06);
 }
 
+/* Header nav links */
+.nav-link-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.nav-link-inactive {
+  color: var(--text-secondary);
+}
+
+.nav-link-inactive:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
 /* Subtle grid background */
 .bg-grid {
   background-image:
