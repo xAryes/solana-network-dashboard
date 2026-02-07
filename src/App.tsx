@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type ReactNode } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   useNetworkStats,
@@ -183,6 +183,17 @@ function SidebarNav() {
 }
 
 function App() {
+  const [visualMode, setVisualMode] = useState<'modern' | 'classic'>(() =>
+    (localStorage.getItem('sol-visual') as 'modern' | 'classic') || 'modern'
+  );
+  const toggleVisual = useCallback(() => {
+    setVisualMode(prev => {
+      const next = prev === 'modern' ? 'classic' : 'modern';
+      localStorage.setItem('sol-visual', next);
+      return next;
+    });
+  }, []);
+
   const { stats, isLoading, error: statsError } = useNetworkStats();
   const { blocks } = useRecentBlocks(4);
   const { supply } = useSupplyInfo();
@@ -345,10 +356,28 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)]">
+    <div className="min-h-screen bg-[var(--bg-primary)]" data-visual={visualMode}>
+      {/* Solana ambient background — hidden in classic mode via CSS */}
+      <div className="sol-ambient" aria-hidden="true">
+        <div className="sol-orb sol-orb-1" />
+        <div className="sol-orb sol-orb-2" />
+        <div className="sol-orb sol-orb-3" />
+        <div className="sol-orb sol-orb-4" />
+        <div className="sol-waves">
+          <div className="sol-wave-line" />
+          <div className="sol-wave-line" />
+          <div className="sol-wave-line" />
+          <div className="sol-wave-line" />
+          <div className="sol-wave-line" />
+        </div>
+        <div className="sol-noise" />
+        <div className="sol-grid" />
+        <div className="sol-vignette" />
+      </div>
+
       {/* Header */}
       <header className="border-b border-[var(--border-primary)]/50 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-black/70 backdrop-blur-xl z-30" style={{ WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 relative">
           {/* Left side */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <NavLink to="/" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
@@ -365,8 +394,8 @@ function App() {
             </span>
           </div>
 
-          {/* Center - Page Navigation */}
-          <nav className="hidden md:flex items-center gap-1">
+          {/* Center - Page Navigation (absolute for true centering) */}
+          <nav className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
             {PAGES.map(page => (
               <NavLink
                 key={page.path}
@@ -387,8 +416,8 @@ function App() {
           </nav>
 
           {/* Right side */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden lg:flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="hidden lg:flex items-center gap-1.5">
               <div className="px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)]">
                 <span className="text-[10px] text-[var(--text-muted)]">Slot </span>
                 <span className="text-xs font-mono text-[var(--text-secondary)]">{stats.currentSlot.toLocaleString()}</span>
@@ -398,13 +427,29 @@ function App() {
                 <span className="text-xs font-mono text-[var(--text-secondary)]">{stats.epochInfo.epoch}</span>
                 <span className="text-[10px] text-[var(--accent)] ml-1">{stats.epochInfo.epochProgress.toFixed(0)}%</span>
               </div>
+              <div className="px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)] flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-tertiary)] animate-pulse" />
+                <span className="text-xs font-mono text-[var(--accent-tertiary)]">{stats.tps.toLocaleString()}</span>
+                <span className="text-[10px] text-[var(--text-muted)]">TPS</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[var(--accent-tertiary)]/10 border border-[var(--accent-tertiary)]/30">
+            {/* TPS for smaller screens (no Slot/Epoch) */}
+            <div className="lg:hidden flex items-center gap-1 px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-primary)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-tertiary)] animate-pulse" />
-              <span className="text-xs sm:text-sm text-[var(--accent-tertiary)] font-mono font-medium">
-                {stats.tps.toLocaleString()} <span className="hidden sm:inline">TPS</span>
-              </span>
+              <span className="text-xs font-mono text-[var(--accent-tertiary)]">{stats.tps.toLocaleString()}</span>
             </div>
+            {/* Visual mode toggle */}
+            <button
+              onClick={toggleVisual}
+              className="visual-toggle"
+              title={visualMode === 'modern' ? 'Switch to classic' : 'Switch to modern'}
+            >
+              {visualMode === 'modern' ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              )}
+            </button>
           </div>
         </div>
       </header>
@@ -440,7 +485,7 @@ function App() {
       <SidebarNav />
 
       {/* Main Content - Routed Pages */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0 relative z-10">
         <div key={location.pathname} className="page-transition">
           <Routes location={location}>
             <Route path="/" element={
@@ -488,7 +533,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0">
+      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0 relative z-10">
         <div className="max-w-7xl mx-auto">
           {/* Category Legend - only show on Explorer page */}
           {location.pathname === '/explorer' && (

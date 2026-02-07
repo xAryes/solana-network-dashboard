@@ -5,7 +5,7 @@
   --bg-primary: #000000;
   --bg-secondary: #0a0a0a;
   --bg-tertiary: #141414;
-  --bg-card: #0a0a0a;
+  --bg-card: #0d0d0d;
   --bg-hover: #1a1a1a;
 
   --border-primary: #262626;
@@ -73,15 +73,49 @@ body {
   color: var(--bg-primary);
 }
 
-/* Card styles - slightly brighter border for contrast */
+/* Card styles — glass morphism (modern mode, default) */
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  background: rgba(13, 13, 13, 0.6);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.02);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle top-edge gradient shimmer */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(153, 69, 255, 0.15), rgba(20, 241, 149, 0.1), transparent);
+  opacity: 0.6;
 }
 
 .card-hover:hover {
   border-color: var(--border-secondary);
+}
+
+/* Classic mode — solid opaque cards */
+[data-visual="classic"] .card {
+  background: var(--bg-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+[data-visual="classic"] .card::before {
+  display: none;
 }
 
 /* Monospace for data */
@@ -198,18 +232,41 @@ section, main [id] {
 }
 
 .card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(153, 69, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+[data-visual="classic"] .card:hover {
   border-color: var(--border-secondary);
+  box-shadow: none;
 }
 
 /* Enhanced card with glow effect */
 .card-glow {
-  background: var(--bg-card);
-  border: 1px solid var(--border-primary);
+  background: rgba(13, 13, 13, 0.6);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
   transition: all 0.3s ease;
 }
 
 .card-glow:hover {
+  border-color: rgba(196, 181, 253, 0.25);
+  box-shadow: 0 0 30px rgba(196, 181, 253, 0.06);
+}
+
+[data-visual="classic"] .card-glow {
+  background: var(--bg-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border-primary);
+}
+
+[data-visual="classic"] .card-glow:hover {
   border-color: var(--accent);
   box-shadow: 0 0 20px rgba(196, 181, 253, 0.1);
 }
@@ -337,6 +394,237 @@ section, main [id] {
   main {
     padding-bottom: 100px !important;
   }
+}
+
+/* ======= Solana Ambient Background ======= */
+
+/* Container */
+.sol-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* --- Floating gradient orbs --- */
+.sol-orb {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+/* Purple — large, top-left, closest/brightest */
+.sol-orb-1 {
+  width: 800px;
+  height: 800px;
+  top: -15%;
+  left: -10%;
+  background: radial-gradient(circle, rgba(153, 69, 255, 0.15), rgba(153, 69, 255, 0.04) 50%, transparent 70%);
+  filter: blur(60px);
+  animation: orbFloat1 22s ease-in-out infinite;
+}
+
+/* Green — large, bottom-right */
+.sol-orb-2 {
+  width: 700px;
+  height: 700px;
+  bottom: -12%;
+  right: -8%;
+  background: radial-gradient(circle, rgba(20, 241, 149, 0.12), rgba(20, 241, 149, 0.03) 50%, transparent 70%);
+  filter: blur(70px);
+  animation: orbFloat2 28s ease-in-out infinite;
+}
+
+/* Blue — mid-size, drifts through center */
+.sol-orb-3 {
+  width: 500px;
+  height: 500px;
+  top: 35%;
+  left: 55%;
+  background: radial-gradient(circle, rgba(0, 194, 255, 0.08), rgba(0, 194, 255, 0.02) 50%, transparent 70%);
+  filter: blur(90px);
+  animation: orbFloat3 32s ease-in-out infinite;
+}
+
+/* Magenta — small, deep background accent */
+.sol-orb-4 {
+  width: 350px;
+  height: 350px;
+  top: 60%;
+  left: 15%;
+  background: radial-gradient(circle, rgba(220, 31, 255, 0.06), transparent 70%);
+  filter: blur(100px);
+  animation: orbFloat4 38s ease-in-out infinite;
+}
+
+@keyframes orbFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  20% { transform: translate(100px, 80px) scale(1.08); }
+  50% { transform: translate(60px, 180px) scale(0.95); }
+  80% { transform: translate(-40px, 70px) scale(1.05); }
+}
+
+@keyframes orbFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  30% { transform: translate(-90px, -80px) scale(1.1); }
+  60% { transform: translate(-40px, -150px) scale(0.93); }
+  85% { transform: translate(50px, -50px) scale(1.04); }
+}
+
+@keyframes orbFloat3 {
+  0%, 100% { transform: translate(-50%, 0) scale(1); }
+  25% { transform: translate(calc(-50% + 80px), -100px) scale(1.12); }
+  50% { transform: translate(calc(-50% - 60px), 40px) scale(0.88); }
+  75% { transform: translate(calc(-50% + 20px), -60px) scale(1.06); }
+}
+
+@keyframes orbFloat4 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  35% { transform: translate(70px, -90px) scale(1.15); }
+  70% { transform: translate(-50px, 50px) scale(0.9); }
+}
+
+/* --- Noise grain texture --- */
+.sol-noise {
+  position: absolute;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  opacity: 0.03;
+  mix-blend-mode: overlay;
+}
+
+/* --- Flowing data streams — short gradient streaks --- */
+.sol-waves {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.sol-wave-line {
+  position: absolute;
+  width: 30%;
+  height: 1px;
+  opacity: 0;
+}
+
+.sol-wave-line::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 1px;
+}
+
+.sol-wave-line:nth-child(1) {
+  top: 18%;
+  left: 0;
+  animation: streamDrift 8s ease-in-out 0s infinite;
+}
+.sol-wave-line:nth-child(1)::before {
+  background: linear-gradient(90deg, transparent, rgba(153, 69, 255, 0.35), transparent);
+}
+
+.sol-wave-line:nth-child(2) {
+  top: 42%;
+  left: 0;
+  width: 25%;
+  animation: streamDrift 10s ease-in-out 3s infinite;
+}
+.sol-wave-line:nth-child(2)::before {
+  background: linear-gradient(90deg, transparent, rgba(20, 241, 149, 0.25), transparent);
+}
+
+.sol-wave-line:nth-child(3) {
+  top: 68%;
+  left: 0;
+  width: 20%;
+  animation: streamDrift 12s ease-in-out 6s infinite;
+}
+.sol-wave-line:nth-child(3)::before {
+  background: linear-gradient(90deg, transparent, rgba(0, 194, 255, 0.3), transparent);
+}
+
+.sol-wave-line:nth-child(4) {
+  top: 30%;
+  left: 0;
+  width: 15%;
+  animation: streamDrift 14s ease-in-out 1.5s infinite;
+}
+.sol-wave-line:nth-child(4)::before {
+  background: linear-gradient(90deg, transparent, rgba(220, 31, 255, 0.2), transparent);
+}
+
+.sol-wave-line:nth-child(5) {
+  top: 82%;
+  left: 0;
+  width: 22%;
+  animation: streamDrift 9s ease-in-out 5s infinite;
+}
+.sol-wave-line:nth-child(5)::before {
+  background: linear-gradient(90deg, transparent, rgba(153, 69, 255, 0.2), rgba(20, 241, 149, 0.15), transparent);
+}
+
+@keyframes streamDrift {
+  0% { opacity: 0; transform: translateX(-20%); }
+  15% { opacity: 0.5; }
+  85% { opacity: 0.4; }
+  100% { opacity: 0; transform: translateX(400%); }
+}
+
+/* --- Dot grid --- */
+.sol-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black, transparent);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black, transparent);
+}
+
+/* Vignette — darkened edges for focus */
+.sol-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.5) 100%);
+}
+
+/* Classic mode — hide ambient background entirely */
+[data-visual="classic"] .sol-ambient {
+  display: none;
+}
+
+/* Visual mode toggle button */
+.visual-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+
+.visual-toggle:hover {
+  color: var(--accent);
+  background: rgba(153, 69, 255, 0.08);
+  border-color: rgba(153, 69, 255, 0.2);
+}
+
+[data-visual="classic"] .visual-toggle {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-visual="classic"] .visual-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Subtle grid background */
