@@ -5,7 +5,7 @@
   --bg-primary: #000000;
   --bg-secondary: #0a0a0a;
   --bg-tertiary: #141414;
-  --bg-card: #0a0a0a;
+  --bg-card: #0d0d0d;
   --bg-hover: #1a1a1a;
 
   --border-primary: #262626;
@@ -73,11 +73,12 @@ body {
   color: var(--bg-primary);
 }
 
-/* Card styles - slightly brighter border for contrast */
+/* Card styles */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-primary);
   border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .card-hover:hover {
@@ -199,6 +200,7 @@ section, main [id] {
 
 .card:hover {
   border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 /* Enhanced card with glow effect */
@@ -337,6 +339,28 @@ section, main [id] {
   main {
     padding-bottom: 100px !important;
   }
+}
+
+/* Solana ambient background — subtle brand-colored gradient orbs */
+.sol-ambient {
+  position: fixed;
+  top: -200px;
+  left: -200px;
+  right: -200px;
+  bottom: -200px;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 900px 700px at 8% 12%, rgba(153, 69, 255, 0.055), transparent 70%),
+    radial-gradient(ellipse 700px 900px at 88% 82%, rgba(20, 241, 149, 0.04), transparent 70%),
+    radial-gradient(ellipse 500px 500px at 50% 45%, rgba(0, 194, 255, 0.025), transparent 55%);
+  animation: ambientDrift 40s ease-in-out infinite alternate;
+}
+
+@keyframes ambientDrift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(25px, -15px) scale(1.05); }
+  100% { transform: translate(-15px, 25px) scale(1.02); }
 }
 
 /* Subtle grid background */

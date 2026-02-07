@@ -346,6 +346,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-primary)]">
+      {/* Solana ambient background */}
+      <div className="sol-ambient" aria-hidden="true" />
+
       {/* Header */}
       <header className="border-b border-[var(--border-primary)]/50 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-black/70 backdrop-blur-xl z-30" style={{ WebkitBackdropFilter: 'blur(20px) saturate(180%)', backdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
@@ -440,7 +443,7 @@ function App() {
       <SidebarNav />
 
       {/* Main Content - Routed Pages */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0 relative z-10">
         <div key={location.pathname} className="page-transition">
           <Routes location={location}>
             <Route path="/" element={
@@ -488,7 +491,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0">
+      <footer className="border-t border-[var(--border-primary)] px-4 sm:px-6 py-6 mt-8 mb-16 md:mb-0 relative z-10">
         <div className="max-w-7xl mx-auto">
           {/* Category Legend - only show on Explorer page */}
           {location.pathname === '/explorer' && (
