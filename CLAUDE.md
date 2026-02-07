@@ -7,8 +7,8 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 ## Current State
 
 - **Branch**: main
-- **Status**: Security architecture overhaul — API keys removed from frontend, all external calls routed through Express backend proxy (`server/`). Vercel Speed Insights + Analytics added. Leader table limited to 25 rows. Uncommitted changes.
-- **Last updated**: 2026-02-06
+- **Status**: UNCOMMITTED CHANGES (~925 insertions). Last commit: `adadd3e`. Working tree has: SidebarNav, NetworkHeatmap, per-leader performance tracking, epoch slot avg comparison. Backend proxy ready (`server/`), not yet deployed.
+- **Last updated**: 2026-02-07
 - **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
 
@@ -76,12 +76,28 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] Vercel Speed Insights + Analytics added to main.tsx
 - [x] Leader schedule table limited to 25 rows
 - [x] Dockerfile for backend deployment
+- [x] Nakamoto coefficient line in validators table (by stake, green line + annotation)
+- [x] HealthGauge SVG ring on leader schedule table (size=28, hover tooltip)
+- [x] EpochSlotDistribution: avg slots + Nakamoto coefficient in summary strip
+- [x] Geography: hex colors, removed stacked continent bar, thinned country bars
+- [x] formatLocation: country name instead of flag emoji
+- [x] Fee-by-position: Shift+click multi-select (was Ctrl+click)
+- [x] Reverted failure rate chart to committed version (agent had added bezier/gradients)
+- [x] Reverted validator expanded health to HealthGauge SVG rings (agent had changed to progress bars)
+- [x] SidebarNav: fixed left-side scroll-spy navigation (2xl+ screens only, frosted glass, per-route sections)
+- [x] NetworkHeatmap: CU fill + failure rate by hour of day (IndexedDB persistence, 7-day rolling window)
+- [x] useBlockHeatmap hook: stores per-block stats in IndexedDB heatmap_stats store, backfills recent blocks
+- [x] Per-leader performance tracking: session-accumulated blocks/CU/txs/failed refs in App(), exposed as validatorPerformance
+- [x] Epoch slot avg comparison: historical avg slots per epoch vs current allocation (in EpochSlotDistribution)
+- [x] IndexedDB version bump (1→2) for heatmap_stats object store
 - [ ] Deploy backend proxy (Render/Cloudflare/Railway) ← NEXT
 - [ ] Set `VITE_API_URL` on Vercel to deployed backend URL
 - [ ] Rotate Helius + Alchemy API keys (old keys in git history)
+- [ ] Test block queue with 8 blocks (experimental — user unsure if it would work)
 - [ ] UI/UX polish — design isn't final, needs visual improvements
 - [ ] Improve mobile experience (BlockDeepDive is heavy on small screens)
 - [ ] Add loading timeout / "no data" states for sections that stay empty
+- [ ] Commit uncommitted changes (SidebarNav, Heatmap, leader perf, epoch slot comparison)
 
 ## Key Decisions
 
@@ -107,11 +123,20 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - **Explorer card alignment**: `flex flex-col` + `mt-auto` pushes stacked bars to card bottom regardless of content height above.
 - **Failures volume chart removed**: Raw failure volume per epoch was "not interesting" — rate trends are more actionable.
 - **Failures composition chart removed**: Category composition per block group was too granular to be useful.
+- **Nakamoto coefficient in validators table**: Green line at the row where cumulative stake exceeds 33.33%, with annotation row. Computed by stake, not slots.
+- **HealthGauge everywhere**: SVG ring with grade letter used in both validators table and leader schedule table. Hover tooltip shows score breakdown (skip 40%, commission 20%, liveness 20%, vote 20%).
+- **Geography: hex colors, no stacked bar**: Direct hex colors for continents (better contrast than CSS vars). Stacked continent bar removed (user said "too aggressive"). Clean list with thin progress bars.
+- **formatLocation text-only**: "City, Country" format instead of flag emojis (inconsistent rendering across OS/browser).
+- **Shift+click for multi-select**: Fee-by-position chart uses Shift+click (not Ctrl/Cmd+click) for selecting multiple sections.
+- **SidebarNav scroll-spy on 2xl only**: Fixed left sidebar with section dots + labels, visible only on 2xl+ screens. Uses IntersectionObserver-style scroll tracking (largest visible area wins). Frosted glass styling.
+- **NetworkHeatmap with IndexedDB**: CU fill and failure rate heatmap by hour of day. Data persisted in IndexedDB `heatmap_stats` store with 7-day rolling cleanup. Backfills from recent blocks on mount.
+- **Per-leader performance in App refs**: Session-accumulated leader stats (blocks, CU, txs, failed) tracked via 4 refs in App(), exposed as `validatorPerformance` Map via useMemo. Used in EpochSlotDistribution and ValidatorsPage.
+- **Epoch slot avg comparison**: EpochSlotDistribution computes historical avg slots per epoch from networkHistory, compares with current epoch allocation. Shows delta percentage.
 
 ## Project Structure
 
-- `src/App.tsx` (~4824 lines) — All UI components + 4 page wrappers in one file
-- `src/hooks/useSolanaData.ts` (~1900 lines) — All data fetching hooks + IndexedDB
+- `src/App.tsx` (~5680 lines) — All UI components + 4 page wrappers + SidebarNav in one file
+- `src/hooks/useSolanaData.ts` (~2340 lines) — All data fetching hooks + IndexedDB (2 stores: blocks, heatmap_stats)
 - `src/index.css` — CSS variables, animations, utility classes
 - `src/main.tsx` — Entry point with React Error Boundary + HashRouter + Vercel Analytics/SpeedInsights
 - `server/` — Express backend proxy (API key security)
@@ -128,7 +153,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 | Path | Page | Contents |
 |------|------|----------|
 | `/` | DashboardPage | Overview, Epoch Progress, EpochSummaryCards (4 cards), Validators & Network, Supply, Leader Rotation, Limits |
-| `/explorer` | ExplorerPage | EpochDetailedAnalytics (fees/CU), Real-time Analytics (redesigned), Block Deep Dive (interactive fee-by-position chart) |
+| `/explorer` | ExplorerPage | Real-time Analytics (redesigned), NetworkHeatmap (CU/failures by hour), Block Deep Dive (interactive fee-by-position chart), EpochDetailedAnalytics (fees/CU) |
 | `/failures` | FailuresPage | Hero stats strip, Failure Rate by Epoch chart, Failing Programs (vs current epoch), 3-col insights (CU Waste/Block Position/Error Types), Cost of Failures, Session Trend, Top Wallets (collapsible) |
 | `/validators` | ValidatorsPage | Validator table (with health scores, skip rate, search), Geographic Distribution |
 
@@ -163,19 +188,25 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 Desktop: horizontal NavLink bar in header (4 items) + "by xAryes"
 Mobile: fixed bottom NavLink bar (4 items)
 Footer: credits line (Helius, refresh rate, Solana Compass) + X icon — all on one row
-Active state via react-router `isActive` — no scroll spy
+Active state via react-router `isActive`
+SidebarNav: Fixed left sidebar (2xl+ only) with scroll-spy section dots per route
 
 ### Component Map
 | Component | Page | Props |
 |-----------|------|-------|
 | DashboardPage | `/` | stats, supply, validators, inflation, cluster, production, leaderSchedule, getValidatorName, getValidatorMetadata, networkHistory |
-| ExplorerPage | `/explorer` | blocks, transactions, getValidatorName, networkHistory |
+| ExplorerPage | `/explorer` | blocks, transactions, getValidatorName, networkHistory, heatmapData |
 | FailuresPage | `/failures` | blocks, networkHistory, failureAccumulation |
-| ValidatorsPage | `/validators` | topValidators, getValidatorName, getValidatorMetadata, production, validatorLocations, currentSlot |
+| ValidatorsPage | `/validators` | topValidators, getValidatorName, getValidatorMetadata, production, validatorLocations, currentSlot, leaderSchedule, networkHistory, validatorPerformance |
 | EpochSummaryCards | Dashboard | data (NetworkHistoryData) — 4 summary cards with mini bar charts |
 | EpochDetailedAnalytics | Explorer | data (NetworkHistoryData) — Fee Breakdown, CU Efficiency |
 | LeaderSchedulePanel | Dashboard | leaderSchedule, currentSlot, getValidatorName, getValidatorMetadata |
 | ValidatorGeography | Validators | validatorLocations (from useValidatorLocations) |
+| EpochSlotDistribution | Validators | leaderSchedule, getValidatorName, getValidatorMetadata, networkHistory, validatorPerformance |
+| NetworkHeatmap | Explorer | data (HeatmapData) — 24-bucket CU fill + failure rate heatmap |
+| SidebarNav | All pages | (no props, uses useLocation + scroll spy) — fixed left nav, 2xl+ only |
+| HealthGauge | Multiple | score, grade, size — SVG ring component |
+| UpcomingLeadersTable | Dashboard | leaderSchedule, currentSlot, getValidatorName, getValidatorMetadata, production |
 
 ### Module-Level Helpers (near CU_CATEGORIES)
 - `formatSOL(lamports)` — SOL display with precision ranges + lamports fallback for tiny values

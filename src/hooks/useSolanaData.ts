@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 // Inline base58 decoder (avoids missing @types/bs58)
@@ -1608,8 +1608,9 @@ export interface HistoricalStats {
 }
 
 const DB_NAME = 'solana-dashboard-history';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'blocks';
+const HEATMAP_STORE = 'heatmap_stats';
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -1630,6 +1631,10 @@ async function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'slot' });
         store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(HEATMAP_STORE)) {
+        const heatmapStore = db.createObjectStore(HEATMAP_STORE, { keyPath: 'slot' });
+        heatmapStore.createIndex('blockTime', 'blockTime', { unique: false });
       }
     };
   });
@@ -2048,4 +2053,285 @@ export function useNetworkHistory(epochsBack: number = 3) {
   }, [epochsBack]);
 
   return data;
+}
+
+// ============================================
+// BLOCK HEATMAP — Historical CU fill + failure rate by hour of day
+// ============================================
+
+export interface HeatmapBucket {
+  hour: number;           // 0-23 UTC
+  avgCuFillPct: number;   // average CU used / 60M limit as percentage
+  avgFailureRate: number;  // average failed / total txs as percentage
+  sampleCount: number;
+}
+
+export interface HeatmapData {
+  buckets: HeatmapBucket[];  // 24 entries (one per hour)
+  loading: boolean;           // backfill in progress
+  coverage: number;           // % of hour buckets with >= 3 samples
+}
+
+interface HeatmapBlockStat {
+  slot: number;
+  blockTime: number;    // Unix seconds
+  hour: number;         // 0-23 UTC
+  cuUsed: number;
+  txCount: number;
+  failedCount: number;
+}
+
+// Store a heatmap stat in IndexedDB
+async function storeHeatmapStat(stat: HeatmapBlockStat): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(HEATMAP_STORE, 'readwrite');
+    tx.objectStore(HEATMAP_STORE).put(stat);
+  } catch { /* silent */ }
+}
+
+// Load all heatmap stats from IndexedDB (last 7 days)
+async function loadHeatmapStats(): Promise<HeatmapBlockStat[]> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(HEATMAP_STORE, 'readonly');
+    const store = tx.objectStore(HEATMAP_STORE);
+    const index = store.index('blockTime');
+    const cutoff = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+    const range = IDBKeyRange.lowerBound(cutoff);
+
+    return new Promise((resolve) => {
+      const results: HeatmapBlockStat[] = [];
+      const request = index.openCursor(range);
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          results.push(cursor.value);
+          cursor.continue();
+        } else {
+          resolve(results);
+        }
+      };
+      request.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+// Clean up old heatmap stats (older than 7 days)
+async function cleanupHeatmapStats(): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(HEATMAP_STORE, 'readwrite');
+    const store = tx.objectStore(HEATMAP_STORE);
+    const index = store.index('blockTime');
+    const cutoff = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+    const range = IDBKeyRange.upperBound(cutoff);
+    index.openCursor(range).onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
+    };
+  } catch { /* silent */ }
+}
+
+function bucketStats(stats: HeatmapBlockStat[]): HeatmapBucket[] {
+  const buckets: HeatmapBucket[] = Array.from({ length: 24 }, (_, h) => ({
+    hour: h,
+    avgCuFillPct: 0,
+    avgFailureRate: 0,
+    sampleCount: 0,
+  }));
+
+  // Group by hour
+  const hourGroups = new Map<number, HeatmapBlockStat[]>();
+  for (const s of stats) {
+    const group = hourGroups.get(s.hour) || [];
+    group.push(s);
+    hourGroups.set(s.hour, group);
+  }
+
+  for (const [hour, group] of hourGroups) {
+    const totalCuPct = group.reduce((sum, s) => sum + (s.cuUsed / SOLANA_LIMITS.BLOCK_CU_LIMIT) * 100, 0);
+    const totalFailRate = group.reduce((sum, s) => {
+      return sum + (s.txCount > 0 ? (s.failedCount / s.txCount) * 100 : 0);
+    }, 0);
+    buckets[hour] = {
+      hour,
+      avgCuFillPct: totalCuPct / group.length,
+      avgFailureRate: totalFailRate / group.length,
+      sampleCount: group.length,
+    };
+  }
+
+  return buckets;
+}
+
+export function useBlockHeatmap(currentSlot: number, blocks: SlotData[]) {
+  const [stats, setStats] = useState<HeatmapBlockStat[]>([]);
+  const [loading, setLoading] = useState(true);
+  const processedSlotsRef = useRef<Set<number>>(new Set());
+  const samplerRunningRef = useRef(false);
+  const slotReadyRef = useRef(false);
+  const currentSlotRef = useRef(currentSlot);
+
+  // Load cached data from IndexedDB on mount
+  useEffect(() => {
+    loadHeatmapStats().then((cached) => {
+      if (cached.length > 0) {
+        setStats(cached);
+        for (const s of cached) processedSlotsRef.current.add(s.slot);
+      }
+      setLoading(true); // still loading until backfill finishes
+    });
+    cleanupHeatmapStats();
+  }, []);
+
+  // Ingest live blocks from useRecentBlocks
+  useEffect(() => {
+    if (!blocks || blocks.length === 0) return;
+    const newStats: HeatmapBlockStat[] = [];
+
+    for (const block of blocks) {
+      if (processedSlotsRef.current.has(block.slot)) continue;
+      if (!block.transactions || !block.blockTime) continue;
+      processedSlotsRef.current.add(block.slot);
+
+      const hour = new Date(block.blockTime * 1000).getUTCHours();
+      const cuUsed = block.totalCU || block.transactions.reduce((sum, tx) => sum + tx.computeUnits, 0);
+      const failedCount = block.transactions.filter(tx => !tx.success).length;
+
+      const stat: HeatmapBlockStat = {
+        slot: block.slot,
+        blockTime: block.blockTime,
+        hour,
+        cuUsed,
+        txCount: block.transactions.length,
+        failedCount,
+      };
+      newStats.push(stat);
+      storeHeatmapStat(stat);
+    }
+
+    if (newStats.length > 0) {
+      setStats(prev => [...prev, ...newStats]);
+    }
+  }, [blocks]);
+
+  // Keep currentSlotRef updated
+  currentSlotRef.current = currentSlot;
+
+  // Trigger sampler once when slot becomes available
+  const slotReady = currentSlot > 0;
+  if (slotReady && !slotReadyRef.current) slotReadyRef.current = true;
+
+  // Background sampler — fetch ~240 historical blocks from last 7 days (batched parallel)
+  useEffect(() => {
+    if (!slotReady || samplerRunningRef.current) return;
+    samplerRunningRef.current = true;
+
+    const controller = new AbortController();
+    const refSlot = currentSlotRef.current;
+
+    (async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const SLOT_DURATION = 0.4; // seconds per slot
+
+      // Generate target slots: ~3 per hour × 24 hours × 7 days = 504 candidates
+      // Multiple samples per hour-day for statistical significance
+      const targetSlots: number[] = [];
+      for (let dayBack = 0; dayBack < 7; dayBack++) {
+        for (let hour = 0; hour < 24; hour++) {
+          for (const minuteOffset of [10, 30, 50]) {
+            const targetTimeSec = nowSec - (dayBack * 86400) - ((23 - hour) * 3600) - (minuteOffset * 60);
+            const slotOffset = Math.round((nowSec - targetTimeSec) / SLOT_DURATION);
+            const targetSlot = refSlot - slotOffset;
+            if (targetSlot > 0) targetSlots.push(targetSlot);
+          }
+        }
+      }
+
+      // Shuffle and take ~240 (enough for ~10 samples per hour bucket)
+      for (let i = targetSlots.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [targetSlots[i], targetSlots[j]] = [targetSlots[j], targetSlots[i]];
+      }
+      const sampled = targetSlots.filter(s => !processedSlotsRef.current.has(s)).slice(0, 240);
+
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < sampled.length; i += BATCH_SIZE) {
+        if (controller.signal.aborted) break;
+        const batch = sampled.slice(i, i + BATCH_SIZE);
+
+        const results = await Promise.allSettled(
+          batch.map(async (slot) => {
+            if (processedSlotsRef.current.has(slot)) return null;
+            const res = await fetch(`${API_URL}/api/rpc`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getBlock',
+                params: [slot, {
+                  encoding: 'json',
+                  transactionDetails: 'accounts',
+                  rewards: false,
+                  maxSupportedTransactionVersion: 0,
+                }],
+              }),
+              signal: controller.signal,
+            });
+            const json = await res.json();
+            processedSlotsRef.current.add(slot);
+            if (!json.result || !json.result.blockTime) return null;
+
+            const block = json.result;
+            const blockTime: number = block.blockTime;
+            const hour = new Date(blockTime * 1000).getUTCHours();
+            const txs: Array<{ meta: { err: unknown; computeUnitsConsumed?: number } }> = block.transactions || [];
+            const txCount = txs.length;
+            const failedCount = txs.filter(tx => tx.meta?.err !== null).length;
+            const cuUsed = txs.reduce((sum, tx) => sum + (tx.meta?.computeUnitsConsumed ?? 200000), 0);
+
+            const stat: HeatmapBlockStat = { slot, blockTime, hour, cuUsed, txCount, failedCount };
+            storeHeatmapStat(stat);
+            return stat;
+          })
+        );
+
+        const newStats = results
+          .filter((r): r is PromiseFulfilledResult<HeatmapBlockStat | null> => r.status === 'fulfilled')
+          .map(r => r.value)
+          .filter((s): s is HeatmapBlockStat => s !== null);
+
+        if (newStats.length > 0) {
+          setStats(prev => [...prev, ...newStats]);
+        }
+
+        // Throttle: 1 second between batches (5 parallel × ~48 batches = ~48s total)
+        if (i + BATCH_SIZE < sampled.length) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+      setLoading(false);
+    })();
+
+    return () => controller.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotReady]); // Run once when currentSlot becomes available
+
+  // Compute bucketed data
+  const heatmapData: HeatmapData = useMemo(() => {
+    const buckets = bucketStats(stats);
+    const filledBuckets = buckets.filter(b => b.sampleCount >= 3).length;
+    const coverage = (filledBuckets / 24) * 100;
+    return { buckets, loading, coverage };
+  }, [stats, loading]);
+
+  return heatmapData;
 }

@@ -27,6 +27,7 @@
 │  useBlockProduction() → skip rate                     │
 │  useValidatorInfo()   → validator counts              │
 │  useValidatorLocations() → geographic data            │
+│  useBlockHeatmap()    → CU/failure heatmap (IndexedDB) │
 │  useHistoricalProgramFailures() → IndexedDB (unused)  │
 │  fetchEnhancedTx()    → TX enrichment (on-demand)     │
 └──────────────────────┬───────────────────────────────┘
@@ -47,9 +48,10 @@
 │    │   └── NetworkLimitsSection                       │
 │    │                                                  │
 │    ├── ExplorerPage (/explorer)                       │
-│    │   ├── EpochDetailedAnalytics (fees/CU/table)    │
 │    │   ├── AnalyticsSection (fees, CU distribution)  │
-│    │   └── BlockDeepDive (4-panel + tx visualization)│
+│    │   ├── NetworkHeatmap (CU fill + failures/hour)  │
+│    │   ├── BlockDeepDive (4-panel + tx visualization)│
+│    │   └── EpochDetailedAnalytics (fees/CU/table)    │
 │    │                                                  │
 │    ├── FailuresPage (/failures)                       │
 │    │   └── FailedTransactionsAnalysis                │
@@ -58,14 +60,21 @@
 │    │       ├── All Failing Programs (accumulated)    │
 │    │       └── Top Failing Wallets                   │
 │    │                                                  │
+│    ├── SidebarNav (fixed left, 2xl+ only, scroll-spy)│
+│    │                                                  │
 │    └── ValidatorsPage (/validators)                   │
-│        ├── TopValidatorsSection (paginated, logos)    │
-│        └── ValidatorGeography                        │
+│        ├── TopValidatorsSection (paginated, logos,    │
+│        │   Nakamoto line by stake)                    │
+│        ├── EpochSlotDistribution (avg/Nakamoto strip  │
+│        │   + epoch slot avg comparison + session CU)  │
+│        └── ValidatorGeography (hex colors, no bar)   │
 │                                                       │
 │  Module-level helpers:                                │
 │    formatSOL, formatCompact, getTrend, TrendBadge    │
 │    CU_CATEGORIES, CATEGORY_COLORS                    │
-│    getAvatarGradient, formatLocation, COUNTRY_FLAGS   │
+│    getAvatarGradient, formatLocation                 │
+│    computeHealthScore, HealthGauge, GRADE_COLORS     │
+│    SIDEBAR_SECTIONS, useSidebarActiveSection          │
 └──────────────────────────────────────────────────────┘
 ```
 

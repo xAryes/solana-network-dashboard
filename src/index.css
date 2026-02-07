@@ -133,9 +133,42 @@ button {
   outline-offset: 2px;
 }
 
-/* Section spacing */
-section {
-  scroll-margin-top: 60px;
+/* Section spacing — covers both <section> and <div> elements used as scroll targets */
+section, main [id] {
+  scroll-margin-top: 80px;
+}
+
+/* Sidebar navigation */
+.sidebar-nav {
+  background: rgba(10, 10, 10, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 10px 0;
+  transition: border-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+.sidebar-nav:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 30px rgba(196, 181, 253, 0.04);
+}
+
+@keyframes sidebarPulse {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(196, 181, 253, 0.5); }
+  50% { box-shadow: 0 0 8px 2px rgba(196, 181, 253, 0.8); }
+}
+
+.sidebar-dot-active {
+  animation: sidebarPulse 3s ease-in-out infinite;
+}
+
+.sidebar-item {
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* Responsive utilities */

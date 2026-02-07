@@ -34,28 +34,6 @@ function getAvatarGradient(pubkey: string): string {
   return `linear-gradient(135deg, hsl(${hue1}, 70%, 50%), hsl(${hue2}, 70%, 40%))`;
 }
 
-// Country code to flag emoji mapping
-const COUNTRY_FLAGS: Record<string, string> = {
-  'US': '🇺🇸', 'USA': '🇺🇸', 'United States': '🇺🇸',
-  'DE': '🇩🇪', 'Germany': '🇩🇪',
-  'NL': '🇳🇱', 'Netherlands': '🇳🇱',
-  'GB': '🇬🇧', 'UK': '🇬🇧', 'United Kingdom': '🇬🇧',
-  'FR': '🇫🇷', 'France': '🇫🇷',
-  'JP': '🇯🇵', 'Japan': '🇯🇵',
-  'SG': '🇸🇬', 'Singapore': '🇸🇬',
-  'CA': '🇨🇦', 'Canada': '🇨🇦',
-  'AU': '🇦🇺', 'Australia': '🇦🇺',
-  'FI': '🇫🇮', 'Finland': '🇫🇮',
-  'CH': '🇨🇭', 'Switzerland': '🇨🇭',
-  'IE': '🇮🇪', 'Ireland': '🇮🇪',
-  'HK': '🇭🇰', 'Hong Kong': '🇭🇰',
-  'KR': '🇰🇷', 'South Korea': '🇰🇷',
-  'PL': '🇵🇱', 'Poland': '🇵🇱',
-  'UA': '🇺🇦', 'Ukraine': '🇺🇦',
-  'RU': '🇷🇺', 'Russia': '🇷🇺',
-  'IN': '🇮🇳', 'India': '🇮🇳',
-  'BR': '🇧🇷', 'Brazil': '🇧🇷',
-};
 
 function formatLocation(location?: string): string {
   if (!location) return '';
@@ -73,6 +51,136 @@ const PAGES = [
   { path: '/failures', label: 'Failures', icon: '✕' },
   { path: '/validators', label: 'Validators', icon: '⬡' },
 ];
+
+// Sidebar section definitions per route
+const SIDEBAR_SECTIONS: Record<string, { id: string; label: string }[]> = {
+  '/': [
+    { id: 'overview', label: 'Overview' },
+    { id: 'epoch-progress', label: 'Epoch' },
+    { id: 'epoch-summary', label: 'History' },
+    { id: 'validators-network', label: 'Validators' },
+    { id: 'supply', label: 'Supply' },
+    { id: 'leader-rotation', label: 'Leader' },
+    { id: 'leader-schedule', label: 'Schedule' },
+    { id: 'limits', label: 'Limits' },
+  ],
+  '/explorer': [
+    { id: 'analytics', label: 'Analytics' },
+    { id: 'deepdive', label: 'Blocks' },
+    { id: 'epoch-detail', label: 'Epoch' },
+  ],
+  '/failures': [
+    { id: 'failures', label: 'Overview' },
+    { id: 'failure-trend', label: 'Trend' },
+    { id: 'failing-programs', label: 'Programs' },
+    { id: 'failure-insights', label: 'Insights' },
+    { id: 'failure-cost', label: 'Cost' },
+    { id: 'failure-wallets', label: 'Wallets' },
+  ],
+  '/validators': [
+    { id: 'validators-table', label: 'Table' },
+    { id: 'slot-distribution', label: 'Slots' },
+    { id: 'geo-distribution', label: 'Geography' },
+  ],
+};
+
+function useSidebarActiveSection(sectionKey: string, sectionIds: string[]) {
+  const [activeId, setActiveId] = useState(sectionIds[0] || '');
+
+  useEffect(() => {
+    if (sectionIds.length === 0) return;
+    setActiveId(sectionIds[0]);
+
+    let rafId = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        // If near page bottom, activate last section
+        const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
+        if (atBottom) {
+          setActiveId(sectionIds[sectionIds.length - 1]);
+          return;
+        }
+        // Pick the last section whose top has scrolled past the trigger line
+        // Trigger = 30% down from header — feels like "currently reading"
+        const triggerY = 64 + window.innerHeight * 0.25;
+        let bestId = sectionIds[0];
+        for (const id of sectionIds) {
+          const el = document.getElementById(id);
+          if (!el) continue;
+          const top = el.getBoundingClientRect().top;
+          if (top <= triggerY) {
+            bestId = id;
+          } else {
+            break; // sections are in DOM order, no need to check further
+          }
+        }
+        setActiveId(bestId);
+      });
+    };
+
+    // Initial check after DOM settles
+    const timer = setTimeout(onScroll, 150);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, [sectionKey]);
+
+  return activeId;
+}
+
+function SidebarNav() {
+  const location = useLocation();
+  const path = location.pathname;
+  const sections = SIDEBAR_SECTIONS[path] || [];
+  const sectionIds = useMemo(() => sections.map(s => s.id), [path]);
+  const activeId = useSidebarActiveSection(path, sectionIds);
+
+  if (sections.length === 0) return null;
+
+  return (
+    <nav className="fixed left-4 top-1/2 -translate-y-1/2 z-20 hidden xl:block">
+      <div className="sidebar-nav flex flex-col">
+        {sections.map((section, idx) => {
+          const isActive = activeId === section.id;
+          return (
+            <button
+              key={`${path}-${section.id}`}
+              onClick={() => {
+                const target = document.getElementById(section.id);
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className="sidebar-item flex items-center gap-2.5 px-3 py-1.5 text-left rounded-md"
+              style={{ animation: `fadeIn 0.25s ease-out ${idx * 0.03}s both` }}
+            >
+              <div className="relative flex-shrink-0">
+                <div
+                  className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${
+                    isActive
+                      ? 'bg-[var(--accent)] sidebar-dot-active scale-150'
+                      : 'bg-[var(--border-secondary)]'
+                  }`}
+                />
+              </div>
+              <span
+                className={`text-[10px] whitespace-nowrap transition-all duration-300 leading-none ${
+                  isActive
+                    ? 'text-[var(--accent)] font-medium'
+                    : 'text-[var(--text-muted)]'
+                }`}
+              >
+                {section.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
 
 function App() {
   const { stats, isLoading, error: statsError } = useNetworkStats();
@@ -110,7 +218,6 @@ function App() {
       if (!block.transactions || processedSlotsRef.current.has(block.slot)) continue;
       processedSlotsRef.current.add(block.slot);
       accTotalBlocksRef.current++;
-
 
       for (const tx of block.transactions) {
         accTotalTxsRef.current++;
@@ -329,6 +436,9 @@ function App() {
         </div>
       </nav>
 
+      {/* Sidebar Navigation — 2xl+ only */}
+      <SidebarNav />
+
       {/* Main Content - Routed Pages */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 mb-16 md:mb-0">
         <div key={location.pathname} className="page-transition">
@@ -463,7 +573,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
   return (
     <>
       {/* Network Overview */}
-      <section className="mb-8 sm:mb-10">
+      <section id="overview" className="mb-8 sm:mb-10">
         <SectionHeader title="Network Overview" subtitle="Real-time Solana mainnet metrics — slot height, throughput, and epoch timing" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Current Slot" value={stats.currentSlot.toLocaleString()} subtext="live" accent />
@@ -486,7 +596,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       </section>
 
       {/* Epoch Progress */}
-      <section className="mb-8 sm:mb-10">
+      <section id="epoch-progress" className="mb-8 sm:mb-10">
         {(() => {
           const remainingSlots = stats.epochInfo.slotsInEpoch - stats.epochInfo.slotIndex;
           const remainingSeconds = remainingSlots * 0.4;
@@ -529,7 +639,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       <NetworkHistorySection data={networkHistory} />
 
       {/* Validators & Network */}
-      <section className="mb-8 sm:mb-10">
+      <section id="validators-network" className="mb-8 sm:mb-10">
         <SectionHeader title="Validators & Network" subtitle="Current validator set and block production stats for this epoch" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard
@@ -568,7 +678,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       </section>
 
       {/* Supply & Economics */}
-      <section className="mb-8 sm:mb-10">
+      <section id="supply" className="mb-8 sm:mb-10">
         <SectionHeader title="Supply & Economics" subtitle="SOL supply distribution and current inflation parameters" />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Total Supply" value={supply ? formatNumber(supply.total) : '—'} subtext="SOL total" accent />
@@ -596,7 +706,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       </section>
 
       {/* Leader Rotation */}
-      <section className="mb-8 sm:mb-10">
+      <section id="leader-rotation" className="mb-8 sm:mb-10">
         <SectionHeader title="Leader Rotation" subtitle="Which validator is producing the current block and who's next — updates every slot (~400ms)" />
         <LeaderSchedulePanel
           leaderSchedule={leaderSchedule}
@@ -608,7 +718,7 @@ function DashboardPage({ stats, supply, validators, inflation, cluster, producti
       </section>
 
       {/* Upcoming Epoch Leaders */}
-      <section className="mb-8 sm:mb-10">
+      <section id="leader-schedule" className="mb-8 sm:mb-10">
         <SectionHeader title="Epoch Leader Schedule" subtitle="Pre-determined block producers for the current epoch — every validator's slot assignments are known in advance" />
         <UpcomingLeadersTable
           leaderSchedule={leaderSchedule}
@@ -1003,7 +1113,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
 
   if (data.isLoading) {
     return (
-      <section className="mb-10">
+      <section id="epoch-summary" className="mb-10">
         <SectionHeader title="Epoch Analytics" subtitle="Loading historical data..." />
         <div className="card p-6">
           <div className="flex items-center justify-center py-8 gap-3">
@@ -1017,7 +1127,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
 
   if (data.error || !data.currentEpoch) {
     return (
-      <section className="mb-10">
+      <section id="epoch-summary" className="mb-10">
         <SectionHeader title="Epoch Analytics" subtitle="Historical network performance data from Solana Compass" />
         <div className="card p-6 text-center py-8">
           <div className="text-[var(--text-muted)]">Unable to load historical data</div>
@@ -1070,7 +1180,7 @@ function NetworkHistorySection({ data }: { data: EpochAnalyticsData }) {
   };
 
   return (
-    <section className="mb-10">
+    <section id="epoch-summary" className="mb-10">
       <SectionHeader
         title="Epoch Analytics"
         subtitle={`Epoch ${current.epoch} • ${allEpochs.length} epochs • Solana Compass`}
@@ -1389,7 +1499,7 @@ function EpochDetailedAnalytics({ data }: { data: EpochAnalyticsData }) {
   ) : null;
 
   return (
-    <section className="mb-8 sm:mb-10">
+    <section id="epoch-detail" className="mb-8 sm:mb-10">
       <SectionHeader title="Epoch Deep Dive" subtitle={`Epoch ${current.epoch} — Compute usage, fee trends, and MEV activity across epochs. Data from Solana Compass.`} />
 
       <div className="grid lg:grid-cols-2 gap-4 mb-4">
@@ -2063,7 +2173,6 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
   const uniqueValidators = sorted.length;
   const top10Pct = sorted.slice(0, 10).reduce((s, v) => s + v.pct, 0);
   const top33Pct = sorted.slice(0, Math.ceil(sorted.length / 3)).reduce((s, v) => s + v.pct, 0);
-  const avgSlots = uniqueValidators > 0 ? Math.round(totalEpochSlots / uniqueValidators) : 0;
 
   // Nakamoto coefficient: minimum validators controlling >33% of slots
   let nakamoto = 0;
@@ -2074,8 +2183,9 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
     if (cumulativePctCalc > 33.33) break;
   }
 
+
   return (
-    <section className="mb-8 sm:mb-10">
+    <section id="slot-distribution" className="mb-8 sm:mb-10">
       <SectionHeader title="Epoch Slot Distribution" subtitle={`How block production is allocated among ${uniqueValidators} validators for epoch ${epoch}`} />
 
       {/* Summary strip */}
@@ -2098,18 +2208,11 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
             <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Top 1/3 Share</div>
           </div>
           <div>
-            <div className="text-lg font-bold text-[var(--text-primary)]">{sorted[0]?.slots.toLocaleString() || '—'}</div>
-            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Max (#{sorted[0]?.name.slice(0, 12) || '?'})</div>
-          </div>
-          <div>
-            <div className="text-lg font-bold text-[var(--text-primary)]">{avgSlots.toLocaleString()}</div>
-            <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Avg Slots</div>
-          </div>
-          <div>
             <div className="text-lg font-bold text-[var(--accent-tertiary)]">{nakamoto}</div>
             <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Nakamoto Coeff.</div>
           </div>
         </div>
+
       </div>
 
       {/* Distribution table */}
@@ -2121,48 +2224,50 @@ function EpochSlotDistribution({ leaderSchedule, getValidatorName, getValidatorM
                 <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium w-8">#</th>
                 <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Validator</th>
                 <th className="text-right py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Slots</th>
-                <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell" style={{ width: '40%' }}>Share</th>
+                <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium hidden sm:table-cell" style={{ width: '30%' }}>Share</th>
               </tr>
             </thead>
             <tbody>
-              {displayed.map((v, idx) => (
-                <tr key={v.pubkey} className="border-b border-[var(--border-primary)]/30 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
-                  <td className="py-1.5 px-4 text-[10px] text-[var(--text-muted)] font-mono">{idx + 1}</td>
-                  <td className="py-1.5 px-4">
-                    <div className="flex items-center gap-2">
-                      <div className="relative flex-shrink-0">
-                        {v.logo ? (
-                          <img src={v.logo} alt={v.name} className="rounded-full object-cover" style={{ width: 24, height: 24 }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} />
-                        ) : null}
-                        <div className={`rounded-full flex items-center justify-center text-white font-bold ${v.logo ? 'hidden' : ''}`}
-                          style={{ width: 24, height: 24, fontSize: 9, background: getAvatarGradient(v.pubkey) }}>
-                          {v.name.slice(0, 2).toUpperCase()}
+              {displayed.map((v, idx) => {
+                return (
+                  <tr key={v.pubkey} className="border-b border-[var(--border-primary)]/30 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
+                    <td className="py-1.5 px-4 text-[10px] text-[var(--text-muted)] font-mono">{idx + 1}</td>
+                    <td className="py-1.5 px-4">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-shrink-0">
+                          {v.logo ? (
+                            <img src={v.logo} alt={v.name} className="rounded-full object-cover" style={{ width: 24, height: 24 }}
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} />
+                          ) : null}
+                          <div className={`rounded-full flex items-center justify-center text-white font-bold ${v.logo ? 'hidden' : ''}`}
+                            style={{ width: 24, height: 24, fontSize: 9, background: getAvatarGradient(v.pubkey) }}>
+                            {v.name.slice(0, 2).toUpperCase()}
+                          </div>
                         </div>
+                        <span className="text-xs text-[var(--text-primary)] truncate max-w-[160px]">{v.name}</span>
                       </div>
-                      <span className="text-xs text-[var(--text-primary)] truncate max-w-[160px]">{v.name}</span>
-                    </div>
-                  </td>
-                  <td className="py-1.5 px-4 text-right">
-                    <span className="text-xs text-[var(--text-secondary)] font-mono">{v.slots.toLocaleString()}</span>
-                  </td>
-                  <td className="py-1.5 px-4 hidden sm:table-cell">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${(v.slots / maxSlots) * 100}%`,
-                            background: idx < 10 ? 'var(--accent)' : idx < 33 ? 'var(--accent-secondary)' : 'var(--text-muted)',
-                            opacity: idx < 10 ? 1 : idx < 33 ? 0.7 : 0.4,
-                          }}
-                        />
+                    </td>
+                    <td className="py-1.5 px-4 text-right">
+                      <span className="text-xs text-[var(--text-secondary)] font-mono">{v.slots.toLocaleString()}</span>
+                    </td>
+                    <td className="py-1.5 px-4 hidden sm:table-cell">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${(v.slots / maxSlots) * 100}%`,
+                              background: idx < 10 ? 'var(--accent)' : idx < 33 ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                              opacity: idx < 10 ? 1 : idx < 33 ? 0.7 : 0.4,
+                            }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-[var(--text-muted)] font-mono w-14 text-right">{v.pct.toFixed(2)}%</span>
                       </div>
-                      <span className="text-[10px] text-[var(--text-muted)] font-mono w-14 text-right">{v.pct.toFixed(2)}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -2411,7 +2516,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
           return null;
         }).filter(Boolean) as { i: number; label: string; epoch: number }[];
         return (
-          <div className="card p-3 mb-4 animate-section">
+          <div id="failure-trend" className="card p-3 mb-4 animate-section">
             <div className="text-[9px] text-[var(--text-muted)] uppercase mb-1 flex items-center justify-between">
               <span>Failure Rate by Epoch</span>
               <div className="flex items-center gap-3 normal-case text-[var(--text-tertiary)]">
@@ -2512,7 +2617,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
       })()}
 
       {/* Failing Programs (full width) */}
-      <div className="card p-4 mb-4 animate-section">
+      <div id="failing-programs" className="card p-4 mb-4 animate-section">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[var(--error)] live-dot" />
@@ -2689,7 +2794,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
       </div>
 
       {/* Session Insights — 3-column */}
-      <div className="grid md:grid-cols-3 gap-4 mb-4">
+      <div id="failure-insights" className="grid md:grid-cols-3 gap-4 mb-4">
 
         {/* CU Waste by Program */}
         <div className="card p-4 animate-section">
@@ -2813,7 +2918,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
       </div>
 
       {/* Two-Column: Cost + Session Trend */}
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
+      <div id="failure-cost" className="grid md:grid-cols-2 gap-4 mb-4">
 
         {/* Cost of Failures */}
         <div className="card p-4 animate-section flex flex-col" style={{ animationDelay: '0.1s' }}>
@@ -2929,7 +3034,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
       </div>
 
       {/* Top Failing Wallets (collapsible) */}
-      <div className="card animate-section" style={{ animationDelay: '0.2s' }}>
+      <div id="failure-wallets" className="card animate-section" style={{ animationDelay: '0.2s' }}>
         <button
           onClick={() => setShowWallets(!showWallets)}
           className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--bg-secondary)]/50 transition-colors rounded-xl"
@@ -2983,6 +3088,9 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
     </section>
   );
 }
+
+// FUTURE: NetworkHeatmap (CU fill + failure rate by hour of day)
+// Removed from UI — needs sustained data accumulation. Hook useBlockHeatmap still in useSolanaData.ts.
 
 // Block Deep Dive - Detailed block analysis with bar chart visualization
 function BlockDeepDive({ blocks, getValidatorName }: { blocks: SlotData[]; getValidatorName: (pubkey: string) => string | null }) {
@@ -4522,16 +4630,10 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
     return result;
   }, [validators, searchQuery, getValidatorName, getValidatorMetadata, barFilter, production, currentSlot]);
 
-  if (!validatorInfo) return null;
-
-  const totalPages = Math.ceil(filteredValidators.length / PAGE_SIZE);
-  const safePageNum = Math.min(page, Math.max(0, totalPages - 1));
-  const pageStart = safePageNum * PAGE_SIZE;
-  const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredValidators.length);
-  const pageValidators = filteredValidators.slice(pageStart, pageEnd);
-
   // Nakamoto coefficient by stake: minimum validators controlling >33.33% of total stake
+  // MUST be before early return to keep hooks count stable
   const nakamotoStake = useMemo(() => {
+    if (validators.length === 0) return 0;
     let cumStake = 0;
     for (let i = 0; i < validators.length; i++) {
       cumStake += validators[i].activatedStake;
@@ -4539,6 +4641,14 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
     }
     return validators.length;
   }, [validators, totalStake]);
+
+  if (!validatorInfo) return null;
+
+  const totalPages = Math.ceil(filteredValidators.length / PAGE_SIZE);
+  const safePageNum = Math.min(page, Math.max(0, totalPages - 1));
+  const pageStart = safePageNum * PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredValidators.length);
+  const pageValidators = filteredValidators.slice(pageStart, pageEnd);
 
   // Stacked bar helper — interactive when onSegmentClick provided
   const StackedBar = ({ segments, height = 8, onSegmentClick, activeKey }: {
@@ -4577,7 +4687,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
   };
 
   return (
-    <section className="mb-10">
+    <section id="validators-table" className="mb-10">
       <SectionHeader title="Validators" subtitle={`${validators.length} validators ranked by stake weight. Health scores combine skip rate, commission, and uptime into a single 0-100 metric.`} />
 
       {/* Summary Stats Cards */}
@@ -4748,18 +4858,21 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
 
       {/* Validators Table */}
       <div className="card overflow-hidden">
-        {/* Pagination Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/30 gap-3">
+        {/* Search + Pagination Header */}
+        <div className="px-4 pt-3 pb-2.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/30">
+          <div className="mb-2.5">
+            <input
+              type="text"
+              placeholder="Search by name, pubkey, or location..."
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
+              className="w-full px-3 py-1.5 text-xs rounded-md bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-secondary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-secondary)]/50 transition-colors"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-[var(--text-muted)] flex-shrink-0">
             {(searchQuery || barFilter) ? `${filteredValidators.length} of ${validators.length}` : `${pageStart + 1}–${pageEnd} of ${validators.length}`}
           </span>
-          <input
-            type="text"
-            placeholder="Search validator..."
-            value={searchQuery}
-            onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
-            className="flex-1 max-w-[200px] px-2.5 py-1 text-xs rounded-md bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-secondary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-secondary)]/50 transition-colors"
-          />
           <div className="flex items-center gap-1">
             <button onClick={() => setPage(0)} disabled={page === 0} className="px-2 py-1 text-xs rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed" title="First page">««</button>
             <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-2 py-1 text-xs rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed">«</button>
@@ -4773,6 +4886,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
             })}
             <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1} className="px-2 py-1 text-xs rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed">»</button>
             <button onClick={() => setPage(totalPages - 1)} disabled={page === totalPages - 1} className="px-2 py-1 text-xs rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:cursor-not-allowed" title="Last page">»»</button>
+          </div>
           </div>
         </div>
 
@@ -5157,18 +5271,8 @@ function ValidatorGeography({ validatorLocations }: {
     .sort((a, b) => b[1] - a[1]);
   const totalContinentCount = continents.reduce((s, [, c]) => s + c, 0);
 
-  const continentColors: Record<string, string> = {
-    'North America': '#8b5cf6',
-    'Europe': '#3b82f6',
-    'Asia': '#10b981',
-    'South America': '#f59e0b',
-    'Oceania': '#06b6d4',
-    'Africa': '#ec4899',
-    'Other': '#6b7280',
-  };
-
   return (
-    <section className="mb-10">
+    <section id="geo-distribution" className="mb-10">
       <SectionHeader title="Geographic Distribution" subtitle={`${totalValidators} nodes indexed — physical locations of validator infrastructure. Concentration in few regions is a decentralization risk.`} />
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -5181,11 +5285,10 @@ function ValidatorGeography({ validatorLocations }: {
           <div className="space-y-1.5">
             {topCountries.map(([country, count], idx) => {
               const pct = (count / totalValidators) * 100;
-              const flag = COUNTRY_FLAGS[country] || '';
               return (
                 <div key={country} className="flex items-center gap-2 text-xs">
                   <span className="text-[10px] text-[var(--text-muted)] w-4 text-right">{idx + 1}</span>
-                  <span className="w-20 flex-shrink-0 truncate text-[var(--text-secondary)]">{flag} {country}</span>
+                  <span className="w-20 flex-shrink-0 truncate text-[var(--text-secondary)]">{country}</span>
                   <div className="flex-1 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
                     <div className="h-full rounded-full bg-[var(--accent)] transition-all duration-500" style={{ width: `${(count / maxCountryCount) * 100}%`, opacity: 0.6 }} />
                   </div>
@@ -5200,7 +5303,7 @@ function ValidatorGeography({ validatorLocations }: {
         {/* Continent Distribution */}
         <div className="card p-4">
           <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)]" />
+            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
             By Continent
           </div>
           <div className="space-y-2">
@@ -5208,10 +5311,9 @@ function ValidatorGeography({ validatorLocations }: {
               const pct = (count / totalContinentCount) * 100;
               return (
                 <div key={continent} className="flex items-center gap-2.5 text-xs">
-                  <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: continentColors[continent] || '#6b7280' }} />
                   <span className="text-[var(--text-secondary)] w-28 flex-shrink-0">{continent}</span>
                   <div className="flex-1 h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: continentColors[continent] || '#6b7280', opacity: 0.7 }} />
+                    <div className="h-full rounded-full bg-[var(--accent)] transition-all duration-500" style={{ width: `${pct}%`, opacity: 0.6 }} />
                   </div>
                   <span className="font-mono text-[var(--text-tertiary)] w-8 text-right">{count}</span>
                   <span className="font-mono text-[10px] text-[var(--text-muted)] w-12 text-right">{pct.toFixed(1)}%</span>
