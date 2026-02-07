@@ -386,7 +386,7 @@ function App() {
                   `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     isActive
                       ? 'bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+                      : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                   }`
                 }
                 end={page.path === '/'}
@@ -4702,7 +4702,7 @@ function TopValidatorsSection({ validatorInfo, getValidatorName, getValidatorMet
                 width: `${(seg.value / total) * 100}%`,
                 backgroundColor: seg.color,
                 opacity: isDimmed ? 0.3 : 1,
-                outline: isActive ? '2px solid white' : 'none',
+                outline: isActive ? '2px solid var(--text-primary)' : 'none',
                 outlineOffset: '-1px',
               }}
               onClick={clickable ? () => onSegmentClick!(segKey) : undefined}
