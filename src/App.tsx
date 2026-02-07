@@ -194,6 +194,11 @@ function App() {
     });
   }, []);
 
+  // Apply theme on <html> so [data-theme] overrides :root variables on the same element
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
   const { stats, isLoading, error: statsError } = useNetworkStats();
   const { blocks } = useRecentBlocks(4);
   const { supply } = useSupplyInfo();
@@ -2691,10 +2696,10 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                   const cuWasted = progCUMap.get(prog) || 0;
 
                   const rateBadge = rate > 50
-                    ? { bg: 'rgba(239, 68, 68, 0.15)', text: 'var(--error)' }
+                    ? { bg: 'color-mix(in srgb, var(--error) 18%, transparent)', text: 'var(--error)' }
                     : rate > 20
-                      ? { bg: 'rgba(245, 158, 11, 0.12)', text: 'var(--warning)' }
-                      : { bg: 'rgba(196, 181, 253, 0.1)', text: 'var(--text-muted)' };
+                      ? { bg: 'color-mix(in srgb, var(--warning) 15%, transparent)', text: 'var(--warning)' }
+                      : { bg: 'color-mix(in srgb, var(--text-muted) 12%, transparent)', text: 'var(--text-muted)' };
 
                   return (
                     <div
@@ -2760,7 +2765,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                           <span
                             className="text-[10px] font-mono w-14 text-center flex-shrink-0 py-0.5 rounded"
                             style={{
-                              backgroundColor: isWorse ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                              backgroundColor: isWorse ? 'color-mix(in srgb, var(--error) 12%, transparent)' : 'color-mix(in srgb, var(--success) 12%, transparent)',
                               color: isWorse ? 'var(--error)' : 'var(--success)',
                             }}
                             title={`Program: ${rate.toFixed(1)}% vs epoch: ${currentEpochFailRate.toFixed(1)}%`}
@@ -2887,7 +2892,7 @@ function FailedTransactionsAnalysis({ blocks, networkHistory, accumulated }: {
                         <span className="font-mono text-[11px]" style={{ color: rate > 10 ? 'var(--error)' : rate > 5 ? 'var(--warning)' : 'var(--text-muted)' }}>{rate.toFixed(1)}%</span>
                       </div>
                       <div className="h-2.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(rate / maxRate) * 100}%`, backgroundColor: rate > 10 ? 'var(--error)' : rate > 5 ? 'var(--warning)' : 'var(--accent)', opacity: 0.6 }} />
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(rate / maxRate) * 100}%`, backgroundColor: rate > 10 ? 'var(--error)' : rate > 5 ? 'var(--warning)' : 'var(--accent)', opacity: 0.75 }} />
                       </div>
                       <div className="text-[9px] text-[var(--text-tertiary)] mt-0.5 font-mono">{bucket.failed.toLocaleString()} failed / {bucket.total.toLocaleString()} txs</div>
                     </div>
