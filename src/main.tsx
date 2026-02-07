@@ -2,6 +2,8 @@ import { StrictMode, Component } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
+import { SpeedInsights } from '@vercel/speed-insights/react'
+import { Analytics } from '@vercel/analytics/react'
 import './index.css'
 import App from './App.tsx'
 
@@ -46,6 +48,8 @@ createRoot(document.getElementById('root')!).render(
       <HashRouter>
         <App />
       </HashRouter>
+      <SpeedInsights />
+      <Analytics />
     </ErrorBoundary>
   </StrictMode>,
 )

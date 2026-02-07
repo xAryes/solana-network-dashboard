@@ -17,16 +17,12 @@ function decodeBase58(str: string): Uint8Array {
   return new Uint8Array(bytes.reverse());
 }
 
-// RPC endpoints - Helius primary (premium), Alchemy fallback
-const HELIUS_API_KEY = 'REDACTED_HELIUS_KEY';
-const HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
-const HELIUS_API = `https://api.helius.xyz/v0`;
-const ALCHEMY_RPC = 'https://solana-mainnet.g.alchemy.com/v2/REDACTED_ALCHEMY_KEY';
+// Backend proxy URL — all external API calls go through this
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const RPC_URL = `${API_URL}/api/rpc`;
 
-// Primary and fallback connections
-let primaryConnection: Connection | null = null;
-let fallbackConnection: Connection | null = null;
-let useHelius = true; // Helius premium is primary
+// Single connection through proxy (proxy handles Helius/Alchemy failover)
+let proxyConnection: Connection | null = null;
 
 // Solana block limits
 export const SOLANA_LIMITS = {
@@ -209,26 +205,18 @@ export interface BlockProductionInfo {
   byIdentity: Record<string, [number, number]>; // identity -> [leaderSlots, blocksProduced]
 }
 
-// Connection management with automatic fallback
+// Connection management — single connection through backend proxy
+// The proxy handles Helius→Alchemy failover and hides API keys
 function getConnection(): Connection {
-  if (useHelius) {
-    if (!primaryConnection) {
-      primaryConnection = new Connection(HELIUS_RPC, { commitment: 'confirmed' });
-    }
-    return primaryConnection;
-  } else {
-    if (!fallbackConnection) {
-      fallbackConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
-    }
-    return fallbackConnection;
+  if (!proxyConnection) {
+    proxyConnection = new Connection(RPC_URL, { commitment: 'confirmed' });
   }
+  return proxyConnection;
 }
 
+// Fallback is the same proxy connection (proxy handles failover internally)
 function getFallbackConnection(): Connection {
-  if (!fallbackConnection) {
-    fallbackConnection = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
-  }
-  return fallbackConnection;
+  return getConnection();
 }
 
 export function useNetworkStats() {
@@ -822,16 +810,10 @@ export function usePriorityFees() {
   useEffect(() => {
     const fetchFees = async () => {
       try {
-        // Use Helius getPriorityFeeEstimate for accurate percentile data
-        const response = await fetch(HELIUS_RPC, {
+        // Priority fee estimate via backend proxy
+        const response = await fetch(`${API_URL}/api/priority-fees`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'priority-fees',
-            method: 'getPriorityFeeEstimate',
-            params: [{ options: { includeAllPriorityFeeLevels: true } }],
-          }),
         });
 
         const data = await response.json();
@@ -905,7 +887,7 @@ export async function fetchEnhancedTransactions(signatures: string[]): Promise<E
   // API accepts up to 100 signatures per call
   const batch = signatures.slice(0, 100);
   try {
-    const response = await fetch(`${HELIUS_API}/transactions?api-key=${HELIUS_API_KEY}`, {
+    const response = await fetch(`${API_URL}/api/enhanced-tx`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transactions: batch }),
@@ -983,8 +965,8 @@ export async function fetchValidatorInfo(): Promise<Map<string, ValidatorMetadat
   }
 
   try {
-    // Stakewiz provides a comprehensive validator list with names, logos, and datacenter info
-    const response = await fetch('https://api.stakewiz.com/validators');
+    // Validator metadata via backend proxy (cached 5min)
+    const response = await fetch(`${API_URL}/api/validators`);
     if (!response.ok) throw new Error('Failed to fetch validator info');
 
     const data = await response.json();
@@ -1199,8 +1181,9 @@ export function useLiveTransactions(maxTx: number = 50) {
 
   useEffect(() => {
     const connect = () => {
-      // Use Helius WebSocket for live logs
-      const wsUrl = HELIUS_RPC.replace('https://', 'wss://');
+      // WebSocket for live logs — requires direct RPC access (not proxied)
+      // This hook is currently unused (LiveTransactionStream removed)
+      const wsUrl = RPC_URL.replace('https://', 'wss://').replace('http://', 'ws://');
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -1301,7 +1284,7 @@ export function useTokenPrices() {
         ];
 
         const response = await fetch(
-          `https://api.jup.ag/price/v2?ids=${mints.join(',')}&showExtraInfo=true`
+          `${API_URL}/api/prices?ids=${mints.join(',')}`
         );
 
         if (!response.ok) throw new Error('Failed to fetch prices');
@@ -1326,14 +1309,14 @@ export function useTokenPrices() {
           const info = tokenMap[mint];
           if (!info) continue;
 
-          const pd = priceData as { price?: string; extraInfo?: { quotedPrice?: { buyPrice?: string; sellPrice?: string } } };
+          const pd = priceData as { price?: string; extraInfo?: { change24h?: number; quotedPrice?: { buyPrice?: string; sellPrice?: string } } };
           const price = parseFloat(pd.price || '0');
 
           const token: TokenPrice = {
             symbol: info.symbol,
             name: info.name,
             price,
-            change24h: 0, // Jupiter v2 doesn't include 24h change directly
+            change24h: pd.extraInfo?.change24h || 0,
             mint,
           };
 
@@ -1517,8 +1500,8 @@ export function useValidatorLocations() {
   useEffect(() => {
     const fetchLocations = async () => {
       try {
-        // Stakewiz provides validator geo data
-        const response = await fetch('https://api.stakewiz.com/validators');
+        // Validator geo data via backend proxy (cached 5min)
+        const response = await fetch(`${API_URL}/api/validators`);
         if (!response.ok) throw new Error('Failed to fetch');
 
         const data = await response.json();
@@ -1934,7 +1917,7 @@ export interface NetworkHistoryData {
 
 export async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats | null> {
   try {
-    const response = await fetch(`https://solanacompass.com/api/epoch-performance/${epoch}?limit=1`);
+    const response = await fetch(`${API_URL}/api/epochs/${epoch}`);
     if (!response.ok) return null;
 
     const json = await response.json();
@@ -1980,6 +1963,38 @@ export async function fetchEpochStats(epoch: number): Promise<EpochNetworkStats 
   }
 }
 
+// Parse a single epoch entry from Solana Compass data format
+function parseEpochEntry(epoch: number, aggregate: Record<string, unknown>): EpochNetworkStats {
+  const numSlots = (aggregate.num_slots as number) || 1;
+  return {
+    epoch,
+    totalSlots: numSlots,
+    skippedSlots: (aggregate.skipped as number) || 0,
+    skipRate: (aggregate.skipped_percent as number) || 0,
+    avgBlockTime: (aggregate.average_block_time as number) || 400,
+    medianBlockTime: (aggregate.median_block_time as number) || 400,
+    totalTransactions: ((aggregate.txns as number) || 0) * numSlots,
+    voteTransactions: ((aggregate.vote_txns as number) || 0) * numSlots,
+    nonVoteTransactions: ((aggregate.non_vote_txns as number) || 0) * numSlots,
+    successfulTx: ((aggregate.success as number) || 0) * numSlots,
+    failedTx: ((aggregate.failed as number) || 0) * numSlots,
+    successRate: (aggregate.txns as number) > 0 ? (((aggregate.success as number) || 0) / (aggregate.txns as number)) * 100 : 0,
+    totalCU: ((aggregate.cu as number) || 0) * numSlots,
+    avgCUPerBlock: (aggregate.cu as number) || 0,
+    totalFees: (aggregate.all_fees as number) || 0,
+    baseFees: (aggregate.base_fees as number) || 0,
+    priorityFees: (aggregate.priority_fees as number) || 0,
+    jitoTips: (aggregate.jito_total as number) || 0,
+    jitoTransactions: (aggregate.jito_transactions as number) || 0,
+    avgJitoTip: (aggregate.jito_avg_tip as number) || 0,
+    medianJitoTip: (aggregate.jito_med_tip as number) || 0,
+    avgFeeRatio: (aggregate.avg_fee_ratio as number) || 0,
+    packedSlots: (aggregate.packed_slots as number) || numSlots,
+    startedAt: (aggregate.created_at as string) || new Date().toISOString(),
+    updatedAt: (aggregate.updated_at as string) || new Date().toISOString(),
+  };
+}
+
 export function useNetworkHistory(epochsBack: number = 3) {
   const [data, setData] = useState<NetworkHistoryData>({
     currentEpoch: null,
@@ -1996,15 +2011,27 @@ export function useNetworkHistory(epochsBack: number = 3) {
         const epochInfo = await connection.getEpochInfo();
         const currentEpochNum = epochInfo.epoch;
 
-        // Fetch current and previous epochs
+        // Batch fetch all epochs in a single request to the proxy
         const epochs = Array.from({ length: epochsBack + 1 }, (_, i) => currentEpochNum - i);
-        const results = await Promise.all(epochs.map(e => fetchEpochStats(e)));
+        const response = await fetch(`${API_URL}/api/epochs/batch?epochs=${epochs.join(',')}`);
 
-        const validResults = results.filter((r): r is EpochNetworkStats => r !== null);
+        if (!response.ok) throw new Error('Batch epoch fetch failed');
+
+        const json = await response.json() as { epochs: Record<string, { data: Array<Record<string, unknown>> }> };
+        const results: EpochNetworkStats[] = [];
+
+        for (const epoch of epochs) {
+          const epochData = json.epochs[epoch];
+          if (!epochData?.data) continue;
+          const entries = Array.isArray(epochData.data) ? epochData.data : [epochData.data];
+          const aggregate = entries.find((d: Record<string, unknown>) => d.leader === null) || entries[0];
+          if (!aggregate) continue;
+          results.push(parseEpochEntry(epoch, aggregate));
+        }
 
         setData({
-          currentEpoch: validResults[0] || null,
-          previousEpochs: validResults.slice(1),
+          currentEpoch: results[0] || null,
+          previousEpochs: results.slice(1),
           isLoading: false,
           error: null,
         });

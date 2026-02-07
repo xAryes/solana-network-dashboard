@@ -1876,7 +1876,7 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
             </tr>
           </thead>
           <tbody>
-            {groups.slice(0, 30).map((group, idx) => {
+            {groups.slice(0, 15).map((group, idx) => {
               const metadata = getValidatorMetadata(group.leader);
               const name = getValidatorName(group.leader) || `${group.leader.slice(0, 4)}...${group.leader.slice(-4)}`;
               const logo = metadata?.logo;
@@ -1925,7 +1925,7 @@ function UpcomingLeadersTable({ leaderSchedule, getValidatorName, getValidatorMe
         </table>
       </div>
       <div className="px-4 py-2 border-t border-[var(--border-primary)]/30 text-[10px] text-[var(--text-muted)] flex justify-between">
-        <span>Showing next {Math.min(30, groups.length)} leader rotations ({upcomingLeaders.length - 1} slots)</span>
+        <span>Showing next {Math.min(15, groups.length)} leader rotations ({upcomingLeaders.length - 1} slots)</span>
         <span>Epoch {leaderSchedule.epoch} · {leaderSchedule.totalEpochSlots.toLocaleString()} total slots</span>
       </div>
     </div>

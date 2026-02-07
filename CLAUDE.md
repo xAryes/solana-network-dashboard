@@ -7,7 +7,7 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 ## Current State
 
 - **Branch**: main
-- **Status**: Dashboard live on Vercel. Major UI/UX polish pass: context descriptions on all sections, interactive fee-by-position chart, failures page redesigned (hero strip, streamlined programs table, cost progress bars), Explorer card alignment. Uncommitted changes in App.tsx.
+- **Status**: Security architecture overhaul — API keys removed from frontend, all external calls routed through Express backend proxy (`server/`). Vercel Speed Insights + Analytics added. Leader table limited to 25 rows. Uncommitted changes.
 - **Last updated**: 2026-02-06
 - **Live URL**: https://solwatch.vercel.app/
 - **Branding**: sol.watch (minimal text logo, "s." favicon)
@@ -71,13 +71,22 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - [x] Explorer card alignment: flex-col + mt-auto for stacked bar alignment across 2-column grid
 - [x] CU capacity bar height matched to priority adoption bar (h-3 → h-2)
 - [x] Collapsible top failing wallets section
-- [ ] UI/UX polish — design isn't final, needs visual improvements ← CURRENT
+- [x] Security: Backend proxy server (`server/`) — Express with CORS, rate limiting, Helmet, RPC method whitelist
+- [x] Security: Remove hardcoded API keys from frontend — all calls via `VITE_API_URL` proxy
+- [x] Vercel Speed Insights + Analytics added to main.tsx
+- [x] Leader schedule table limited to 25 rows
+- [x] Dockerfile for backend deployment
+- [ ] Deploy backend proxy (Render/Cloudflare/Railway) ← NEXT
+- [ ] Set `VITE_API_URL` on Vercel to deployed backend URL
+- [ ] Rotate Helius + Alchemy API keys (old keys in git history)
+- [ ] UI/UX polish — design isn't final, needs visual improvements
 - [ ] Improve mobile experience (BlockDeepDive is heavy on small screens)
 - [ ] Add loading timeout / "no data" states for sections that stay empty
 
 ## Key Decisions
 
-- **Helius primary, Alchemy fallback**: Helius has premium features (Enhanced TX, Priority Fee API) that Alchemy lacks
+- **Backend proxy for API security**: All external API calls (Helius, Alchemy, Stakewiz, Solana Compass, Jupiter) go through Express backend. API keys never shipped to browsers.
+- **Helius primary, Alchemy fallback**: Proxy handles failover server-side. Helius has premium features (Enhanced TX, Priority Fee API) that Alchemy lacks
 - **connection.getBlock() over raw fetch**: json encoding is ~5MB vs jsonParsed at ~8.5MB, web3.js handles deserialization
 - **Leader schedule cached in ref**: Epoch data changes every ~2-3 days, no need to refetch on slot changes
 - **Single-file App.tsx**: All components in one file for simplicity; could split later if it grows further
@@ -104,7 +113,13 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 - `src/App.tsx` (~4824 lines) — All UI components + 4 page wrappers in one file
 - `src/hooks/useSolanaData.ts` (~1900 lines) — All data fetching hooks + IndexedDB
 - `src/index.css` — CSS variables, animations, utility classes
-- `src/main.tsx` — Entry point with React Error Boundary + HashRouter
+- `src/main.tsx` — Entry point with React Error Boundary + HashRouter + Vercel Analytics/SpeedInsights
+- `server/` — Express backend proxy (API key security)
+  - `server/src/index.ts` — Express app entry
+  - `server/src/routes/` — rpc, enhanced-tx, priority-fees, validators, epochs, prices
+  - `server/src/middleware/` — CORS, rate limiting, Helmet security headers, RPC method whitelist
+  - `server/Dockerfile` — Production container
+  - `server/.env.example` — Environment variable template
 
 ## Key Architecture
 
@@ -117,13 +132,26 @@ IMPORTANT: At session start, read all .md files in the /docs/ directory to resto
 | `/failures` | FailuresPage | Hero stats strip, Failure Rate by Epoch chart, Failing Programs (vs current epoch), 3-col insights (CU Waste/Block Position/Error Types), Cost of Failures, Session Trend, Top Wallets (collapsible) |
 | `/validators` | ValidatorsPage | Validator table (with health scores, skip rate, search), Geographic Distribution |
 
-### RPC Strategy
-- **Helius** is PRIMARY (premium plan): RPC + Enhanced TX API + Priority Fee API
-- **Alchemy** is FALLBACK: automatic per-call failover when Helius fails
-- Connection management: `getConnection()` returns Helius, `getFallbackConnection()` returns Alchemy
-- API keys are hardcoded in `useSolanaData.ts` (not env vars)
+### RPC Strategy (Backend Proxy)
+- **All API calls** go through `server/` Express backend — no API keys in frontend
+- Frontend uses `VITE_API_URL` env var (falls back to `http://localhost:3001`)
+- `@solana/web3.js` Connection points to `${API_URL}/api/rpc`
+- Proxy handles **Helius→Alchemy failover** server-side
+- **CORS**: Only `solwatch.vercel.app` + `localhost:5173`
+- **Rate limiting**: 120 req/min RPC, 30 req/min enhanced TX, 60 req/min GET endpoints
+- **Security**: Helmet headers, RPC method whitelist (14 allowed methods), 1MB body limit
 
-### External APIs
+### Backend Proxy Routes
+| Route | Method | Upstream | Cache |
+|-------|--------|----------|-------|
+| `/api/rpc` | POST | Helius RPC → Alchemy fallback | None |
+| `/api/priority-fees` | POST | Helius `getPriorityFeeEstimate` | None |
+| `/api/enhanced-tx` | POST | Helius Enhanced TX API | None |
+| `/api/validators` | GET | Stakewiz validators | 5min |
+| `/api/epochs/:epoch` | GET | Solana Compass epoch stats | 1h |
+| `/api/prices?ids=` | GET | Jupiter Price API v2 | 30s |
+
+### External APIs (via backend only)
 | API | Endpoint | Usage |
 |-----|----------|-------|
 | Helius Enhanced TX | `POST api.helius.xyz/v0/transactions?api-key=KEY` | TX type/source enrichment (max 100 sigs) |
@@ -212,10 +240,25 @@ Active state via react-router `isActive` — no scroll spy
 - `selectedEpochIdx` state + `epochCorrelation` useMemo — removed with epoch selector
 
 ## Build & Deploy
+
+### Frontend
 ```bash
 bun install        # install deps
 bun run dev        # dev server (Vite)
 bun run build      # production build (tsc + vite build)
 ```
 - Vercel auto-deploys from `main` branch
-- Bundle is ~698KB (over 500KB warning threshold but acceptable)
+- Set `VITE_API_URL` env var on Vercel pointing to deployed backend
+- Bundle is ~726KB (over 500KB warning threshold but acceptable)
+
+### Backend (`server/`)
+```bash
+cd server
+bun install        # install deps
+bun run dev        # dev server with hot reload (tsx watch)
+bun run build      # compile TypeScript
+bun run start      # production (node dist/index.js)
+```
+- Copy `server/.env.example` to `server/.env` and fill in API keys
+- Deploy via Docker (`server/Dockerfile`) or direct to Render/Railway/Fly.io
+- Required env vars: `HELIUS_API_KEY`, `ALCHEMY_API_KEY`, `ALLOWED_ORIGINS`

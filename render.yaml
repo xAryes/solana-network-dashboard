@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: solwatch-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    repo: https://github.com/your-username/your-repo  # Update this
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: ALCHEMY_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://solwatch.vercel.app
+      - key: PORT
+        value: "3001"
