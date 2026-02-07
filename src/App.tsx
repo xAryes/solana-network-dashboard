@@ -386,7 +386,7 @@ function App() {
                   `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     isActive
                       ? 'bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30'
-                      : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                   }`
                 }
                 end={page.path === '/'}
